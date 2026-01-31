@@ -1,0 +1,33 @@
+# Build (and optionally deploy) with OPENAI_API_KEY from GitHub secret.
+# The app reads the key from the environment; here we inject it from Secrets.
+# For Vercel: also set OPENAI_API_KEY in Vercel → Settings → Environment Variables
+# (same value as the repo secret) so the live site has the key.
+
+name: Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+        # Build uses OPENAI_API_KEY from env (injected from GitHub secret above).
+        # If you deploy elsewhere (e.g. Vercel), set OPENAI_API_KEY in that host's env too.

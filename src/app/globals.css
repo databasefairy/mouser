@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --foreground: #0f172a;
+  --background: #f8fafc;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+}
+
+/* Keep page visible in dark mode */
+@media (prefers-color-scheme: dark) {
+  body {
+    background: #f1f5f9;
+    color: #0f172a;
+  }
+}
