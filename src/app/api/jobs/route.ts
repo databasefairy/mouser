@@ -1,30 +1,122 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOpenAIApiKey } from "@/lib/env";
 
-const JOB_SEARCH_INSTRUCTIONS = `You are a job search assistant. The user will provide their resume or LinkedIn profile text.
+type JobSearchVars = {
+  timeWindowHours: number;
+  minCompensation: number;
+  remoteOnly: boolean;
+  candidateZip: string;
+  excludeRadiusMiles: number;
+  resultCount: number;
+  targetTitlesFreeText: string;
+  selectedIndustries: string[];
+  companyStage: string[];
+};
 
-Your task:
-1. Use web search to find current job openings that match the user's background.
-2. Focus on jobs most likely to respond (strong match, recent postings, active hiring).
-3. Return exactly 10 jobs, ranked from best to worst match.
-4. You MUST respond with ONLY a valid JSON array of objects. No other text, no markdown code fence, no explanation. Just the raw JSON array.
+const DEFAULT_VARS: JobSearchVars = {
+  timeWindowHours: 72,
+  minCompensation: 180_000,
+  remoteOnly: true,
+  candidateZip: "30062",
+  excludeRadiusMiles: 15,
+  resultCount: 10,
+  targetTitlesFreeText:
+    "Senior Product Manager, Staff Product Manager, Principal Product Manager, Director of Product, Head of Product, VP of Product",
+  selectedIndustries: [
+    "Artificial Intelligence / Machine Learning",
+    "SaaS (B2B or B2C)",
+    "Fintech",
+  ],
+  companyStage: [
+    "Series B",
+    "Series C",
+    "Late-stage startup",
+    "Public company",
+  ],
+};
 
-CRITICAL - Direct application links only:
-- "applicationLink" MUST be the direct URL to that specific job's application page—the page where the user can click "Apply" and submit their application for that job.
-- Do NOT use: job board search URLs, "view all jobs" or career homepage URLs, LinkedIn/Indeed/Glassdoor search result links, or any URL that shows a list of jobs instead of one job's apply page.
-- Only include a job if you can find a direct link to that job's apply page (e.g. company careers site job page, or job board listing page for that single role). If you cannot find a direct apply URL for a job, omit it and find another job that has one.
-- Each applicationLink must open the specific job posting or its apply form, not a search or directory.
+function buildJobSearchInstructions(vars: JobSearchVars): string {
+  const selectedIndustriesStr = vars.selectedIndustries.map((s) => `  "${s}"`).join(",\n");
+  const companyStageStr = vars.companyStage.map((s) => `  "${s}"`).join(",\n");
+  return `You are a precise job-search research agent. Your task is to find REAL, CURRENT job listings and return structured, verifiable results. Accuracy matters more than quantity.
 
-Each object in the array must have exactly these keys (use these exact names):
-- "jobTitle": string (the job title)
-- "company": string (company name)
-- "applicationLink": string (direct URL to this job's application page only; must be a real URL that goes straight to apply for this job)
-- "probabilityOfCallback": number from 1 to 10 (10 = very likely to get a callback, 1 = unlikely; base on match quality, recency, company size)
+VARIABLES (use these exactly):
+TIME_WINDOW_HOURS = ${vars.timeWindowHours}
+MIN_COMPENSATION = ${vars.minCompensation}
+REMOTE_ONLY = ${vars.remoteOnly}
+CANDIDATE_ZIP = ${vars.candidateZip}
+EXCLUDE_RADIUS_MILES = ${vars.excludeRadiusMiles}
+RESULT_COUNT = ${vars.resultCount}
 
-Example format (your response must be only the array, no other text):
-[{"jobTitle":"Software Engineer","company":"Acme Inc","applicationLink":"https://example.com/careers/software-engineer-apply","probabilityOfCallback":8},...]
+TARGET_TITLES_FREE_TEXT =
+"""
+${vars.targetTitlesFreeText}
+"""
 
-Use web search to find real job postings and their direct apply URLs. Do not invent URLs. Return only the JSON array.`;
+INDUSTRIES_STANDARD = [
+  "Artificial Intelligence / Machine Learning",
+  "SaaS (B2B or B2C)",
+  "Fintech",
+  "Healthtech",
+  "Cybersecurity",
+  "Developer Tools",
+  "Data / Analytics",
+  "Cloud Infrastructure",
+  "E-commerce",
+  "EdTech",
+  "Marketplace Platforms",
+  "Enterprise Software",
+  "Web3 / Blockchain",
+  "GovTech",
+  "InsurTech",
+  "HR Tech"
+]
+
+SELECTED_INDUSTRIES = [
+${selectedIndustriesStr}
+]
+
+COMPANY_STAGE = [
+${companyStageStr}
+]
+
+RULES (do not violate):
+- Jobs must be posted within TIME_WINDOW_HOURS
+- Jobs must be FULLY REMOTE
+- Exclude hybrid, onsite, or office-anchored roles
+- Exclude any job tied to an office within EXCLUDE_RADIUS_MILES miles of CANDIDATE_ZIP
+- Titles must reasonably match TARGET_TITLES_FREE_TEXT
+- Industry must be one of SELECTED_INDUSTRIES
+- Minimum pay must be MIN_COMPENSATION base OR highly likely based on title + company norms
+- If pay is NOT listed, only include Staff, Principal, Group, Director, Head, or VP-level roles
+- Clearly label compensation as:
+  - "Listed: $X–$Y"
+  - OR "Not listed — likely $MIN_COMPENSATION+ based on role level and company"
+
+OUTPUT REQUIREMENTS:
+Return exactly RESULT_COUNT roles unless fewer exist.
+
+For EACH role, you must output a JSON object with these exact keys:
+- jobTitle (string)
+- company (string)
+- industry (string, from INDUSTRIES_STANDARD)
+- postedDate (string, e.g. "within last 24 hours" or "posted 2 days ago")
+- compensation (string, clearly labeled as "Listed: $X–$Y" or "Not listed — likely $MIN_COMPENSATION+ based on role level and company")
+- employmentType (string: "full-time" or "contract")
+- remoteConfirmation (string, e.g. "Fully remote")
+- applicationLink (string: DIRECT APPLY LINK — company careers page, Greenhouse, or Lever only; no job board search links)
+
+STRICTLY AVOID:
+- Invented jobs
+- Stale listings
+- Job boards without direct apply links
+- Guessing posted dates
+- Including roles that do not meet compensation or remote criteria
+
+If fewer than RESULT_COUNT roles exist, return fewer and explain why in a separate short note, but still output a valid JSON array of the jobs you found.
+
+CRITICAL — Your response must be ONLY a valid JSON array of objects. No other text before or after, no markdown code fence, no explanation. Just the raw JSON array. Each object must have exactly: jobTitle, company, industry, postedDate, compensation, employmentType, remoteConfirmation, applicationLink.`;
+}
 
 export async function POST(request: NextRequest) {
   const apiKey = getOpenAIApiKey();
@@ -35,7 +127,19 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  let body: { resume?: string; linkedin?: string };
+  let body: {
+    resume?: string;
+    linkedin?: string;
+    targetTitles?: string;
+    selectedIndustries?: string[];
+    timeWindowHours?: number;
+    minCompensation?: number;
+    remoteOnly?: boolean;
+    candidateZip?: string;
+    excludeRadiusMiles?: number;
+    resultCount?: number;
+    companyStage?: string[];
+  };
   try {
     body = await request.json();
   } catch {
@@ -45,16 +149,26 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const resume = body.resume ?? body.linkedin ?? "";
-  const trimmed = resume.trim();
-  if (!trimmed) {
-    return NextResponse.json(
-      { error: "Provide resume or linkedin text in the request body." },
-      { status: 400 }
-    );
-  }
+  const vars: JobSearchVars = {
+    ...DEFAULT_VARS,
+    ...(body.targetTitles != null && { targetTitlesFreeText: String(body.targetTitles).trim() }),
+    ...(Array.isArray(body.selectedIndustries) && body.selectedIndustries.length > 0 && {
+      selectedIndustries: body.selectedIndustries.map(String),
+    }),
+    ...(typeof body.timeWindowHours === "number" && { timeWindowHours: body.timeWindowHours }),
+    ...(typeof body.minCompensation === "number" && { minCompensation: body.minCompensation }),
+    ...(typeof body.remoteOnly === "boolean" && { remoteOnly: body.remoteOnly }),
+    ...(body.candidateZip != null && { candidateZip: String(body.candidateZip).trim() }),
+    ...(typeof body.excludeRadiusMiles === "number" && { excludeRadiusMiles: body.excludeRadiusMiles }),
+    ...(typeof body.resultCount === "number" && body.resultCount > 0 && { resultCount: body.resultCount }),
+    ...(Array.isArray(body.companyStage) && body.companyStage.length > 0 && {
+      companyStage: body.companyStage.map(String),
+    }),
+  };
 
-  const userInput = `Here is my resume/LinkedIn profile. Please search the web and return the top 10 jobs most likely to respond to my application, with direct links to apply.\n\n---\n\n${trimmed}`;
+  const instructions = buildJobSearchInstructions(vars);
+  const userInput =
+    "Search the web for jobs matching the criteria above. Return only a valid JSON array of job objects with the required keys. Do not include any text before or after the array.";
 
   const model = process.env.OPENAI_JOB_MODEL || "gpt-4o";
 
@@ -70,7 +184,7 @@ export async function POST(request: NextRequest) {
       },
       body: JSON.stringify({
         model,
-        instructions: JOB_SEARCH_INSTRUCTIONS,
+        instructions,
         input: userInput,
         tools: [{ type: "web_search" }],
         tool_choice: "required",
@@ -110,7 +224,7 @@ export async function POST(request: NextRequest) {
       );
     }
     if (res.status === 404 || res.status === 403) {
-      return tryChatCompletionsFallback(apiKey, userInput);
+      return tryChatCompletionsFallback(apiKey, instructions, userInput, vars.resultCount);
     }
     return NextResponse.json(
       { error: message || "OpenAI request failed." },
@@ -139,18 +253,21 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const jobs = parseJobsFromText(outputText);
+  let jobs = parseJobsFromText(outputText);
   if (jobs.length > 0) {
-    return NextResponse.json({ jobs, citations });
+    jobs = await filterLiveLinks(jobs);
+    return NextResponse.json({ jobs: jobs.slice(0, vars.resultCount), citations });
   }
   return NextResponse.json({ jobsText: outputText, citations });
 }
 
 async function tryChatCompletionsFallback(
   apiKey: string,
-  userInput: string
+  instructions: string,
+  userInput: string,
+  resultCount: number
 ): Promise<NextResponse> {
-  const fullPrompt = `${JOB_SEARCH_INSTRUCTIONS}\n\n---\n\n${userInput}`;
+  const fullPrompt = `${instructions}\n\n---\n\n${userInput}`;
   let res: Response;
   try {
     const controller = new AbortController();
@@ -216,9 +333,10 @@ async function tryChatCompletionsFallback(
     );
   }
 
-  const jobs = parseJobsFromText(content);
+  let jobs = parseJobsFromText(content);
   if (jobs.length > 0) {
-    return NextResponse.json({ jobs, citations });
+    jobs = await filterLiveLinks(jobs);
+    return NextResponse.json({ jobs: jobs.slice(0, resultCount), citations });
   }
   return NextResponse.json({ jobsText: content, citations });
 }
@@ -226,9 +344,84 @@ async function tryChatCompletionsFallback(
 type JobRow = {
   jobTitle: string;
   company: string;
+  industry: string;
+  postedDate: string;
+  compensation: string;
+  employmentType: string;
+  remoteConfirmation: string;
   applicationLink: string;
-  probabilityOfCallback: number;
 };
+
+const LINK_CHECK_TIMEOUT_MS = 10_000;
+/** 404/410 = gone; 408/5xx = error. We do NOT treat 403 as dead (many sites block server requests but link works in browser). */
+const DEAD_STATUS_CODES = new Set([404, 410, 408, 500, 502, 503]);
+const BROWSER_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+/** Phrases that indicate the job page says the position is no longer available (soft 404). */
+const DEAD_PAGE_PHRASES = [
+  "no longer available",
+  "position is no longer available",
+  "job is no longer available",
+  "position has been filled",
+  "job has been filled",
+  "no longer accepting applications",
+  "this position has been filled",
+  "role has been filled",
+  "opportunity is no longer available",
+  "has expired",
+  "job has expired",
+  "position has expired",
+  "removed",
+  "been removed",
+  "no longer open",
+  "we're sorry, this job",
+  "page not found",
+  "job not found",
+  "position not found",
+  "this job is no longer",
+  "link may be broken",
+];
+
+/** Remove jobs whose application link returns 404/410/5xx, fails, or returns a page saying the job is filled/expired. Keeps order. */
+async function filterLiveLinks(jobs: JobRow[]): Promise<JobRow[]> {
+  const results = await Promise.allSettled(
+    jobs.map(async (job) => {
+      const url = job.applicationLink.trim();
+      if (!url.startsWith("http")) return { job, ok: false };
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), LINK_CHECK_TIMEOUT_MS);
+        const res = await fetch(url, {
+          method: "GET",
+          headers: {
+            "User-Agent": BROWSER_UA,
+            Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          },
+          signal: controller.signal,
+          redirect: "follow",
+        });
+        clearTimeout(timeout);
+        if (DEAD_STATUS_CODES.has(res.status)) return { job, ok: false };
+        if (res.status >= 400) return { job, ok: false };
+        if (res.status !== 200) return { job, ok: true };
+        const contentType = (res.headers.get("content-type") ?? "").toLowerCase();
+        if (!contentType.includes("text/html") && !contentType.includes("application/xhtml")) {
+          return { job, ok: true };
+        }
+        const raw = await res.text();
+        const slice = raw.slice(0, 60_000).toLowerCase();
+        const looksDead = DEAD_PAGE_PHRASES.some((phrase) => slice.includes(phrase.toLowerCase()));
+        return { job, ok: !looksDead };
+      } catch {
+        return { job, ok: false };
+      }
+    })
+  );
+  return results
+    .filter((r) => r.status === "fulfilled" && r.value.ok)
+    .map((r) => (r as PromiseFulfilledResult<{ job: JobRow; ok: boolean }>).value.job);
+}
 
 function parseJobsFromText(text: string): JobRow[] {
   const trimmed = text.trim();
@@ -247,12 +440,12 @@ function parseJobsFromText(text: string): JobRow[] {
       .map((item) => ({
         jobTitle: String(item.jobTitle ?? item.job_title ?? ""),
         company: String(item.company ?? ""),
+        industry: String(item.industry ?? ""),
+        postedDate: String(item.postedDate ?? item.posted_date ?? ""),
+        compensation: String(item.compensation ?? ""),
+        employmentType: String(item.employmentType ?? item.employment_type ?? "full-time"),
+        remoteConfirmation: String(item.remoteConfirmation ?? item.remote_confirmation ?? ""),
         applicationLink: String(item.applicationLink ?? item.application_link ?? ""),
-        probabilityOfCallback: typeof item.probabilityOfCallback === "number"
-          ? Math.min(10, Math.max(1, item.probabilityOfCallback))
-          : typeof item.probability_of_callback === "number"
-            ? Math.min(10, Math.max(1, item.probability_of_callback))
-            : 5,
       }))
       .filter((j) => j.jobTitle && j.applicationLink);
   } catch {

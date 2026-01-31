@@ -42,6 +42,20 @@ Web app that finds the **top 10 jobs most likely to respond** when you apply. Pa
 |----------|----------|-------------|
 | `OPENAI_API_KEY` | Yes | Your OpenAI API key. |
 | `OPENAI_JOB_MODEL` | No | Model for job search (default: `gpt-4o`). Must support web search in the Responses API (e.g. `gpt-4o`, `gpt-4o-mini`). |
+| `NEXTAUTH_SECRET` | Yes (for login) | Secret for NextAuth sessions. Generate with `openssl rand -base64 32`. |
+| `NEXTAUTH_URL` | Yes (for login) | Full URL of your app (e.g. `http://localhost:3000` or `https://your-app.vercel.app`). |
+| `GITHUB_ID` / `GITHUB_SECRET` | No | GitHub OAuth app credentials for “Sign in with GitHub”. Create at [GitHub OAuth Apps](https://github.com/settings/developers). |
+| `MOUSER_LOGIN_PASSWORD` | No | If set, users can sign in with any username + this password (for testing). |
+
+## Login
+
+The app uses **NextAuth.js**. You must sign in before using job search.
+
+1. **Required:** Set `NEXTAUTH_SECRET` (e.g. `openssl rand -base64 32`) and `NEXTAUTH_URL` (e.g. `http://localhost:3000`) in `.env`.
+2. **Option A – GitHub:** Create a [GitHub OAuth App](https://github.com/settings/developers) and set `GITHUB_ID` and `GITHUB_SECRET` in `.env`. Callback URL: `http://localhost:3000/api/auth/callback/github` (and your production URL when deployed).
+3. **Option B – Password:** Set `MOUSER_LOGIN_PASSWORD` in `.env`. Users can sign in with any username and that password.
+
+On first visit you’ll be redirected to `/login`. After signing in you can use job search; **Sign out** is in the top-right.
 
 ## API key: both ways
 
@@ -71,6 +85,26 @@ So: **local** = `.env` or `.env.openai_key`; **deployed** = set `OPENAI_API_KEY`
 4. Redeploy. The live site will use the key from the host’s env.
 
 Other hosts (Netlify, Railway, etc.): set `OPENAI_API_KEY` in that platform’s environment the same way.
+
+## Deploy to GitHub Pages (for testing)
+
+The app can be deployed as a **static site** to GitHub Pages. The UI is served from GitHub Pages; the **job search API** must be hosted elsewhere (e.g. Vercel) because GitHub Pages only serves static files.
+
+1. **Enable GitHub Pages**
+   - In your repo: **Settings → Pages**.
+   - Under **Build and deployment**, set **Source** to **GitHub Actions**.
+
+2. **Optional: make job search work on the Pages site**
+   - Deploy the full app to **Vercel** first (so `/api/jobs` and `/api/health` work there).
+   - In the repo: **Settings → Secrets and variables → Actions → Variables**.
+   - Add a variable: **Name** `NEXT_PUBLIC_API_BASE`, **Value** your Vercel URL (e.g. `https://mouser-xxx.vercel.app`). No trailing slash.
+   - The workflow will use this when building; the static site on GitHub Pages will call your Vercel app for job search.
+
+3. **Push to `main`**
+   - The workflow `.github/workflows/pages.yml` runs on push to `main`, builds a static export, and deploys it to GitHub Pages.
+   - Your site will be at `https://<username>.github.io/mouser/` (or your repo’s Pages URL).
+
+If you don’t set `NEXT_PUBLIC_API_BASE`, the Pages site will load but **Find top 10 jobs** will fail (no API). Set it to a Vercel (or other) URL where the API is deployed to get job search on the Pages site.
 
 ## Tech
 
