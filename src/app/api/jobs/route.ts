@@ -223,6 +223,13 @@ async function tryChatCompletionsFallback(
   return NextResponse.json({ jobsText: content, citations });
 }
 
+type JobRow = {
+  jobTitle: string;
+  company: string;
+  applicationLink: string;
+  probabilityOfCallback: number;
+};
+
 function parseJobsFromText(text: string): JobRow[] {
   const trimmed = text.trim();
   let jsonStr = trimmed;
