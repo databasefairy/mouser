@@ -43,7 +43,7 @@ Web app that finds the **top 10 jobs most likely to respond** when you apply. Pa
 | `OPENAI_API_KEY` | Yes | Your OpenAI API key. |
 | `OPENAI_JOB_MODEL` | No | Model for job search (default: `gpt-4o`). Must support web search in the Responses API (e.g. `gpt-4o`, `gpt-4o-mini`). |
 | `NEXTAUTH_SECRET` | Yes (for login) | Secret for NextAuth sessions. Generate with `openssl rand -base64 32`. |
-| `NEXTAUTH_URL` | Yes (for login) | Full URL of your app (e.g. `http://localhost:3000` or `https://your-app.vercel.app`). |
+| `NEXTAUTH_URL` | Yes (for login) | Full URL of your app: local `http://localhost:3000`, production `https://mouser-inky.vercel.app` (no trailing slash). |
 | `GITHUB_ID` / `GITHUB_SECRET` | No | GitHub OAuth app credentials for “Sign in with GitHub”. Create at [GitHub OAuth Apps](https://github.com/settings/developers). |
 | `MOUSER_LOGIN_PASSWORD` | No | If set, users can sign in with any username + this password (for testing). |
 
@@ -56,6 +56,23 @@ The app uses **NextAuth.js**. You must sign in before using job search.
 3. **Option B – Password:** Set `MOUSER_LOGIN_PASSWORD` in `.env`. Users can sign in with any username and that password.
 
 On first visit you’ll be redirected to `/login`. After signing in you can use job search; **Sign out** is in the top-right.
+
+**GitHub OAuth not working?**
+
+1. **Callback URL must match exactly.** In [GitHub OAuth Apps](https://github.com/settings/developers) → your app → **Authorization callback URL**, set it to exactly:
+   - Local: `http://localhost:3000/api/auth/callback/github` (no trailing slash; use your port if not 3000).
+   - Production (this app): `https://mouser-inky.vercel.app/api/auth/callback/github`.
+2. **Vercel env:** `NEXTAUTH_URL` must be exactly `https://mouser-inky.vercel.app` (no trailing slash). Local: `http://localhost:3000`.
+3. **Secrets:** Regenerate the OAuth app **Client secret** on GitHub if unsure; then set the new value in `GITHUB_SECRET`.
+4. If it still fails, try again after a failed sign-in—the login page will show the exact callback URL your app expects so you can copy it into GitHub.
+
+**Getting a 404 after clicking “Sign in with GitHub”?**
+
+The app’s **API routes** (including `/api/auth/callback/github`) only exist when the app runs on a **Node server**. They do **not** exist when the site is served as a **static export** (e.g. from GitHub Pages).
+
+- **If you’re on GitHub Pages:** Sign-in will 404 after GitHub redirects back. Use **Vercel** (or another Node host) for the full app, or run **`npm run dev`** locally to sign in.
+- **If you’re on localhost:** Make sure you’re running **`npm run dev`** (not opening a static `out/` build). Restart the dev server and try again.
+- **If you’re on Vercel:** Open [https://mouser-inky.vercel.app/api/auth/status](https://mouser-inky.vercel.app/api/auth/status). If you get **404** there, the API routes aren’t deployed (check build logs, redeploy). If you get **200**, auth routes exist; then check that `NEXTAUTH_URL` in Vercel is exactly `https://mouser-inky.vercel.app` (no trailing slash) and that the GitHub OAuth app’s callback URL is `https://mouser-inky.vercel.app/api/auth/callback/github`.
 
 ## API key: both ways
 
@@ -77,14 +94,39 @@ So: **local** = `.env` or `.env.openai_key`; **deployed** = set `OPENAI_API_KEY`
 - **Deploy:** To use your GitHub secret for the **deployed** app, pass it into the deploy step so the host gets it. Add `OPENAI_API_KEY` under **Settings → Secrets and variables → Actions**, then in your deploy workflow set the env var from the secret (see `.github/workflows/deploy.yml` if you use the example workflow). The host (e.g. Vercel) then has the key for the running app.
 - **Manual:** Or set `OPENAI_API_KEY` in Vercel (or your host) once and paste the same value as your GitHub secret.
 
-## Deployment (e.g. Vercel)
+## Use Vercel instead of GitHub Pages
 
-1. Push the repo to GitHub and import the project in [Vercel](https://vercel.com).
-2. **Option A – Manual:** In the Vercel project: **Settings → Environment Variables** → add `OPENAI_API_KEY` (paste your key or the value from your GitHub secret).
-3. **Option B – From GitHub secret:** Use the example workflow in `.github/workflows/deploy.yml` (if present): it passes `OPENAI_API_KEY` from the repo secret into the deploy so the host gets it.
-4. Redeploy. The live site will use the key from the host’s env.
+**Yes — you use the Vercel link as your app.** Once deployed, open that URL. For this project the app URL is **https://mouser-inky.vercel.app**. Login and job search work there because Vercel runs the full app (API routes and auth).
 
-Other hosts (Netlify, Railway, etc.): set `OPENAI_API_KEY` in that platform’s environment the same way.
+1. **Deploy to Vercel**
+   - Go to [vercel.com](https://vercel.com) and sign in (e.g. with GitHub).
+   - **Add New Project** → **Import** your `mouser` repo.
+   - Leave build settings as default (Next.js). Click **Deploy**. Wait for the first deploy to finish.
+
+2. **Set environment variables**
+   - In the Vercel project: **Settings → Environment Variables**.
+   - Add these (use your own values):
+
+   | Variable | Value |
+   |----------|--------|
+   | `OPENAI_API_KEY` | Your OpenAI API key |
+   | `NEXTAUTH_SECRET` | e.g. run `openssl rand -base64 32` locally |
+   | `NEXTAUTH_URL` | `https://mouser-inky.vercel.app` (no trailing slash) |
+   | `GITHUB_ID` | GitHub OAuth App **Client ID** |
+   | `GITHUB_SECRET` | GitHub OAuth App **Client secret** |
+
+   Optional: `MOUSER_LOGIN_PASSWORD` for password sign-in; `OPENAI_JOB_MODEL` to change the model.
+
+3. **GitHub OAuth callback**
+   - In [GitHub OAuth Apps](https://github.com/settings/developers) → your app → **Authorization callback URL**, set to exactly:  
+     **`https://mouser-inky.vercel.app/api/auth/callback/github`**
+
+4. **Redeploy**
+   - **Deployments** → ⋮ on the latest → **Redeploy**. After that, use the Vercel link for the app; login and APIs work there.
+
+You can ignore GitHub Pages if you only use Vercel. If you use both, the GitHub Pages site is static (no login); the Vercel link is the one with full app and auth.
+
+Other hosts (Netlify, Railway, etc.): same idea — set the env vars there and use that host’s URL as `NEXTAUTH_URL` and for the GitHub callback.
 
 ## Deploy to GitHub Pages (for testing)
 
@@ -97,7 +139,7 @@ The app can be deployed as a **static site** to GitHub Pages. The UI is served f
 2. **Optional: make job search work on the Pages site**
    - Deploy the full app to **Vercel** first (so `/api/jobs` and `/api/health` work there).
    - In the repo: **Settings → Secrets and variables → Actions → Variables**.
-   - Add a variable: **Name** `NEXT_PUBLIC_API_BASE`, **Value** your Vercel URL (e.g. `https://mouser-xxx.vercel.app`). No trailing slash.
+   - Add a variable: **Name** `NEXT_PUBLIC_API_BASE`, **Value** `https://mouser-inky.vercel.app`. No trailing slash.
    - The workflow will use this when building; the static site on GitHub Pages will call your Vercel app for job search.
 
 3. **Push to `main`**
@@ -108,5 +150,6 @@ If you don’t set `NEXT_PUBLIC_API_BASE`, the Pages site will load but **Find t
 
 ## Tech
 
-- **Next.js** (App Router) + TypeScript + Tailwind
+- **Next.js 15** (App Router) + **React 19** + TypeScript + Tailwind
+- **ESLint 9** + eslint-config-next 15
 - **OpenAI Responses API** with **web_search** for live job search and ranking

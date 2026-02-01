@@ -4,6 +4,7 @@ import GitHubProvider from "next-auth/providers/github";
 import CredentialsProvider from "next-auth/providers/credentials";
 
 const authOptions: NextAuthOptions = {
+  debug: process.env.NODE_ENV !== "production",
   providers: [
     ...(process.env.GITHUB_ID && process.env.GITHUB_SECRET
       ? [
