@@ -66,6 +66,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Result | null>(null);
   const [rateLimit, setRateLimit] = useState<{ used: number; limit: number } | null>(null);
+  const [showRateLimitModal, setShowRateLimitModal] = useState(false);
 
   const [timeWindowHours, setTimeWindowHours] = useState(72);
   const [minCompensation, setMinCompensation] = useState(180_000);
@@ -174,6 +175,7 @@ export default function Home() {
       }
       if (data.rateLimit) setRateLimit(data.rateLimit);
       if (!res.ok) {
+        if (res.status === 429) setShowRateLimitModal(true);
         setError((data as { error?: string }).error ?? "Search failed.");
         setLoading(false);
         return;
@@ -187,11 +189,35 @@ export default function Home() {
     }
   }
 
+  const rateLimitReached = rateLimit != null && rateLimit.used >= rateLimit.limit;
+
   return (
     <main
       className="min-h-screen relative overflow-hidden bg-[#26003B] px-4 sm:px-6 py-8 sm:py-10"
       style={{ backgroundImage: "url('/login-bg.png')", backgroundSize: "cover", backgroundPosition: "center", backgroundRepeat: "no-repeat" }}
     >
+      {showRateLimitModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="rate-limit-title">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" aria-hidden="true" />
+          <div
+            className={`relative z-10 w-full max-w-md rounded-xl p-6 sm:p-8 shadow-2xl ${cardBg}`}
+            style={{ boxShadow: "0 0 0 1px rgba(223,51,140,0.15), 0 25px 50px -12px rgba(38,0,59,0.6)" }}
+          >
+            <h2 id="rate-limit-title" className="text-lg font-semibold text-white mb-2">Search limit reached</h2>
+            <p className="text-white/90 text-sm mb-6">
+              You&apos;ve used all 5 searches for this 24-hour period. Come back later to run more searches.
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowRateLimitModal(false)}
+              className="w-full rounded-xl px-4 py-3 font-semibold text-white transition opacity-90 hover:opacity-100"
+              style={{ background: "linear-gradient(90deg, #DF338C 0%, #972D57 100%)" }}
+            >
+              Got it
+            </button>
+          </div>
+        </div>
+      )}
       <div className="relative z-10 max-w-4xl mx-auto">
         {/* Header */}
         <header className="flex items-center justify-between gap-4 mb-4">
@@ -315,8 +341,8 @@ export default function Home() {
               <textarea id="resume" value={input} onChange={(e) => setInput(e.target.value)} placeholder="Paste resume or LinkedIn text" rows={3} className={`mt-2 ${inputDark} ${inputDarkBg}`} disabled={loading} />
             </section>
 
-            <button type="submit" disabled={loading} className="w-full rounded-xl px-4 py-3 font-semibold text-white disabled:opacity-50 transition opacity-90 hover:opacity-100 mt-2" style={{ background: "linear-gradient(90deg, #DF338C 0%, #972D57 100%)" }}>
-              {loading ? "Searching…" : "Find jobs"}
+            <button type="submit" disabled={loading || rateLimitReached} className="w-full rounded-xl px-4 py-3 font-semibold text-white disabled:opacity-50 transition opacity-90 hover:opacity-100 mt-2" style={{ background: "linear-gradient(90deg, #DF338C 0%, #972D57 100%)" }}>
+              {loading ? "Searching…" : rateLimitReached ? "Limit reached" : "Find jobs"}
             </button>
           </form>
         </div>
