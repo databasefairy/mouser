@@ -2,6 +2,11 @@
   "name": "mouser",
   "version": "0.1.0",
   "private": true,
+  "overrides": {
+    "rimraf": "^5.0.0",
+    "glob": "^10.0.0",
+    "eslint": "^9.0.0"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
