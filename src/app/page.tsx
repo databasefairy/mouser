@@ -51,9 +51,11 @@ type Result = {
   citations?: Array<{ url: string; title?: string }>;
 };
 
-const inputClass =
-  "w-full min-w-0 rounded-lg border border-slate-300 px-3 py-2 text-slate-900 placeholder-slate-400 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500 disabled:opacity-50 box-border";
-const labelClass = "block text-sm font-medium text-slate-700";
+const cardBg = "bg-[#2B203E]/95";
+const inputDark =
+  "w-full min-w-0 rounded-xl border border-white/20 px-3 py-2.5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-[#DF338C]/50 disabled:opacity-50 box-border";
+const inputDarkBg = "bg-white/[0.08]";
+const labelLight = "block text-sm font-medium text-white/90";
 
 export default function Home() {
   const { data: session, status } = useSession();
@@ -101,8 +103,11 @@ export default function Home() {
 
   if (status === "loading" || status === "unauthenticated") {
     return (
-      <main className="min-h-screen flex items-center justify-center">
-        <p className="text-slate-600">Loading…</p>
+      <main
+        className="min-h-screen flex items-center justify-center bg-[#26003B]"
+        style={{ backgroundImage: "url('/login-bg.png')", backgroundSize: "cover", backgroundPosition: "center", backgroundRepeat: "no-repeat" }}
+      >
+        <p className="text-white/80">Loading…</p>
       </main>
     );
   }
@@ -164,311 +169,195 @@ export default function Home() {
   }
 
   return (
-    <main className="w-full max-w-[min(42rem,100%)] sm:max-w-2xl lg:max-w-4xl mx-auto px-4 sm:px-6 py-8 sm:py-12 box-border">
-      <div className="flex items-center justify-between gap-4 mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">
-          Mouser
-        </h1>
-        <div className="flex items-center gap-3">
-          {session?.user?.name && (
-            <span className="text-sm text-slate-600">{session.user.name}</span>
-          )}
-          <button
-            type="button"
-            onClick={() => signOut({ callbackUrl: "/login" })}
-            className="text-sm font-medium text-slate-600 hover:text-slate-900 underline"
-          >
-            Sign out
-          </button>
-        </div>
-      </div>
-      <p className="text-slate-600 mb-8">
-        Search for remote jobs by target titles and industries. Results are filtered by recency, compensation, and direct apply links.
-      </p>
-      <p className="text-slate-500 text-sm mb-6">
-        Not connecting? Run <code className="bg-slate-100 px-1 rounded">npm run dev</code>, add <code className="bg-slate-100 px-1 rounded">OPENAI_API_KEY</code> to <code className="bg-slate-100 px-1 rounded">.env</code>, and check <a href={typeof process.env.NEXT_PUBLIC_API_BASE === "string" ? `${process.env.NEXT_PUBLIC_API_BASE.replace(/\/$/, "")}/api/health` : "/api/health"} target="_blank" rel="noopener noreferrer" className="underline">/api/health</a>.
-      </p>
-
-      <form onSubmit={handleSubmit} className="space-y-6 w-full min-w-0">
-        <section className="space-y-2 w-full min-w-0">
-          <label htmlFor="targetTitles" className={labelClass}>
-            Target job titles (comma-separated or descriptive)
-          </label>
-          <textarea
-            id="targetTitles"
-            value={targetTitlesFreeText}
-            onChange={(e) => setTargetTitlesFreeText(e.target.value)}
-            placeholder="e.g. Senior Product Manager, Staff Engineer, Director of Product"
-            rows={3}
-            className={inputClass}
-            disabled={loading}
-          />
-        </section>
-
-        <section className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full min-w-0">
-          <div className="min-w-0">
-            <label htmlFor="timeWindowHours" className={labelClass}>Posted within (hours)</label>
-            <input
-              id="timeWindowHours"
-              type="number"
-              min={1}
-              max={720}
-              value={timeWindowHours}
-              onChange={(e) => setTimeWindowHours(Number(e.target.value) || 72)}
-              className={inputClass}
-              disabled={loading}
-            />
+    <main
+      className="min-h-screen relative overflow-hidden bg-[#26003B] px-4 sm:px-6 py-8 sm:py-10"
+      style={{ backgroundImage: "url('/login-bg.png')", backgroundSize: "cover", backgroundPosition: "center", backgroundRepeat: "no-repeat" }}
+    >
+      <div className="relative z-10 max-w-4xl mx-auto">
+        {/* Header */}
+        <header className="flex items-center justify-between gap-4 mb-4">
+          <div className="flex items-center gap-3">
+            <img src="/logo-cat.png" alt="Mouser" className="object-contain" style={{ width: "1in", height: "1in" }} />
+            <h1 className="text-xl font-semibold text-white">Mouser - Search</h1>
           </div>
-          <div className="min-w-0">
-            <label htmlFor="minCompensation" className={labelClass}>Min compensation ($)</label>
-            <input
-              id="minCompensation"
-              type="number"
-              min={0}
-              step={1000}
-              value={minCompensation}
-              onChange={(e) => setMinCompensation(Number(e.target.value) || 0)}
-              className={inputClass}
-              disabled={loading}
-            />
-          </div>
-          <div className="min-w-0">
-            <label htmlFor="resultCount" className={labelClass}>Result count</label>
-            <input
-              id="resultCount"
-              type="number"
-              min={1}
-              max={20}
-              value={resultCount}
-              onChange={(e) => setResultCount(Number(e.target.value) || 10)}
-              className={inputClass}
-              disabled={loading}
-            />
-          </div>
-        </section>
-
-        <section className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label htmlFor="candidateZip" className={labelClass}>Your ZIP code</label>
-            <input
-              id="candidateZip"
-              type="text"
-              value={candidateZip}
-              onChange={(e) => setCandidateZip(e.target.value)}
-              placeholder="30062"
-              className={inputClass}
-              disabled={loading}
-            />
-          </div>
-          <div className="min-w-0">
-            <label htmlFor="excludeRadiusMiles" className={labelClass}>Exclude offices within (miles)</label>
-            <input
-              id="excludeRadiusMiles"
-              type="number"
-              min={0}
-              value={excludeRadiusMiles}
-              onChange={(e) => setExcludeRadiusMiles(Number(e.target.value) || 0)}
-              className={inputClass}
-              disabled={loading}
-            />
-          </div>
-        </section>
-
-        <section>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={remoteOnly}
-              onChange={(e) => setRemoteOnly(e.target.checked)}
-              disabled={loading}
-              className="rounded border-slate-300"
-            />
-            <span className={labelClass}>Fully remote only (exclude hybrid/onsite)</span>
-          </label>
-        </section>
-
-        <section className="w-full min-w-0" ref={industriesRef}>
-          <span className={labelClass}>Industries (select one or more)</span>
-          <div className="mt-2 relative w-full min-w-0">
-            <button
-              type="button"
-              onClick={() => setIndustriesOpen((o) => !o)}
-              disabled={loading}
-              className={`${inputClass} text-left flex items-center justify-between gap-2`}
-            >
-              <span className="truncate">
-                {selectedIndustries.length === 0
-                  ? "Select industries…"
-                  : selectedIndustries.length === 1
-                    ? selectedIndustries[0]
-                    : `${selectedIndustries.length} industries selected`}
-              </span>
-              <span className="shrink-0 text-slate-500" aria-hidden>{industriesOpen ? "▲" : "▼"}</span>
+          <div className="flex items-center gap-3">
+            {session?.user?.name && <span className="text-sm text-white/90">{session.user.name}</span>}
+            <button type="button" onClick={() => signOut({ callbackUrl: "/login" })} className="text-sm font-medium text-[#DF338C] hover:text-white/90 underline">
+              Sign out
             </button>
-            {industriesOpen && (
-              <div className="absolute left-0 right-0 top-full mt-1 z-10 bg-white border border-slate-300 rounded-lg shadow-lg max-h-60 overflow-y-auto py-2">
-                {INDUSTRIES_OPTIONS.map((ind) => (
-                  <label
-                    key={ind}
-                    className="flex items-center gap-2 cursor-pointer text-sm px-3 py-2 hover:bg-slate-50"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedIndustries.includes(ind)}
-                      onChange={() => toggleIndustry(ind)}
-                      disabled={loading}
-                      className="rounded border-slate-300"
-                    />
-                    <span className="truncate">{ind}</span>
-                  </label>
-                ))}
-              </div>
-            )}
           </div>
-        </section>
+        </header>
+        <a href={typeof process.env.NEXT_PUBLIC_API_BASE === "string" ? `${process.env.NEXT_PUBLIC_API_BASE.replace(/\/$/, "")}/api/health` : "/api/health"} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-white/60 text-xs hover:text-white/80 mb-6">
+          <span className="text-white/40">›</span> Setup help
+        </a>
 
-        <section className="w-full min-w-0" ref={companyStageRef}>
-          <span className={labelClass}>Company stage (select one or more)</span>
-          <div className="mt-2 relative w-full min-w-0">
-            <button
-              type="button"
-              onClick={() => setCompanyStageOpen((o) => !o)}
-              disabled={loading}
-              className={`${inputClass} text-left flex items-center justify-between gap-2`}
-            >
-              <span className="truncate">
-                {companyStage.length === 0
-                  ? "Select company stages…"
-                  : companyStage.length === 1
-                    ? companyStage[0]
-                    : `${companyStage.length} stages selected`}
-              </span>
-              <span className="shrink-0 text-slate-500" aria-hidden>{companyStageOpen ? "▲" : "▼"}</span>
+        {/* Search criteria card */}
+        <div className={`rounded-xl p-6 sm:p-8 shadow-2xl mb-6 ${cardBg}`} style={{ boxShadow: "0 0 0 1px rgba(223,51,140,0.15), 0 25px 50px -12px rgba(38,0,59,0.5)" }}>
+          <h2 className="text-lg font-semibold text-white mb-6">Search criteria</h2>
+
+          <form onSubmit={handleSubmit} className="space-y-6 w-full min-w-0">
+            <section>
+              <label htmlFor="targetTitles" className={labelLight}>What to search</label>
+              <textarea
+                id="targetTitles"
+                value={targetTitlesFreeText}
+                onChange={(e) => setTargetTitlesFreeText(e.target.value)}
+                placeholder="e.g. Senior Product Manager, Staff Engineer, Director of Product"
+                rows={3}
+                className={`mt-2 ${inputDark} ${inputDarkBg}`}
+                disabled={loading}
+              />
+            </section>
+
+            <section className="w-full min-w-0" ref={industriesRef}>
+              <span className={labelLight}>Industries</span>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {selectedIndustries.map((ind) => (
+                  <span key={ind} className="inline-flex items-center gap-1.5 rounded-full border border-white/20 px-3 py-1.5 text-sm text-white bg-white/[0.08]">
+                    {ind}
+                    <button type="button" onClick={() => toggleIndustry(ind)} disabled={loading} className="text-white/60 hover:text-white" aria-label="Remove">×</button>
+                  </span>
+                ))}
+                <button type="button" onClick={() => setIndustriesOpen((o) => !o)} disabled={loading} className="inline-flex items-center gap-1 rounded-full border border-white/20 px-3 py-1.5 text-sm text-white/80 bg-white/[0.08] hover:text-white">
+                  {industriesOpen ? "▲" : "▼"} Type
+                </button>
+              </div>
+              {industriesOpen && (
+                <div className="mt-2 rounded-xl border border-white/20 max-h-52 overflow-y-auto py-2 bg-[#1a1525]" style={{ background: "rgba(0,0,0,0.3)" }}>
+                  {INDUSTRIES_OPTIONS.map((ind) => (
+                    <label key={ind} className="flex items-center gap-2 cursor-pointer text-sm px-3 py-2 hover:bg-white/10 text-white">
+                      <input type="checkbox" checked={selectedIndustries.includes(ind)} onChange={() => toggleIndustry(ind)} disabled={loading} className="rounded border-white/30" />
+                      <span className="truncate">{ind}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section className="w-full min-w-0" ref={companyStageRef}>
+              <span className={labelLight}>Company stage</span>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {companyStage.map((s) => (
+                  <span key={s} className="inline-flex items-center gap-1.5 rounded-full border border-white/20 px-3 py-1.5 text-sm text-white bg-white/[0.08]">
+                    {s}
+                    <button type="button" onClick={() => toggleCompanyStage(s)} disabled={loading} className="text-white/60 hover:text-white" aria-label="Remove">×</button>
+                  </span>
+                ))}
+                <button type="button" onClick={() => setCompanyStageOpen((o) => !o)} disabled={loading} className="inline-flex items-center gap-1 rounded-full border border-white/20 px-3 py-1.5 text-sm text-white/80 bg-white/[0.08] hover:text-white">
+                  {companyStageOpen ? "▲" : "▼"} Type
+                </button>
+              </div>
+              {companyStageOpen && (
+                <div className="mt-2 rounded-xl border border-white/20 max-h-52 overflow-y-auto py-2 bg-[#1a1525]">
+                  {COMPANY_STAGE_OPTIONS.map((stage) => (
+                    <label key={stage} className="flex items-center gap-2 cursor-pointer text-sm px-3 py-2 hover:bg-white/10 text-white">
+                      <input type="checkbox" checked={companyStage.includes(stage)} onChange={() => toggleCompanyStage(stage)} disabled={loading} className="rounded border-white/30" />
+                      <span className="truncate">{stage}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section>
+              <h3 className={labelLight}>Recency and volume</h3>
+              <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <input id="timeWindowHours" type="number" min={1} max={720} value={timeWindowHours} onChange={(e) => setTimeWindowHours(Number(e.target.value) || 72)} className={`${inputDark} ${inputDarkBg}`} disabled={loading} placeholder="72" />
+                <input id="minCompensation" type="number" min={0} step={1000} value={minCompensation} onChange={(e) => setMinCompensation(Number(e.target.value) || 0)} className={`${inputDark} ${inputDarkBg}`} disabled={loading} placeholder="180000" />
+                <input id="resultCount" type="number" min={1} max={20} value={resultCount} onChange={(e) => setResultCount(Number(e.target.value) || 10)} className={`${inputDark} ${inputDarkBg}`} disabled={loading} placeholder="10" />
+              </div>
+            </section>
+
+            <section>
+              <h3 className={`${labelLight} flex items-center justify-between`}>
+                Location filters
+                {loading && <span className="text-white/50 text-xs font-normal">Searching…</span>}
+              </h3>
+              <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <input id="candidateZip" type="text" value={candidateZip} onChange={(e) => setCandidateZip(e.target.value)} placeholder="ZIP" className={`${inputDark} ${inputDarkBg}`} disabled={loading} />
+                <input id="excludeRadiusMiles" type="number" min={0} value={excludeRadiusMiles} onChange={(e) => setExcludeRadiusMiles(Number(e.target.value) || 0)} className={`${inputDark} ${inputDarkBg}`} disabled={loading} />
+              </div>
+              <label className="mt-2 flex items-center gap-2 cursor-pointer text-white/90 text-sm">
+                <input type="checkbox" checked={remoteOnly} onChange={(e) => setRemoteOnly(e.target.checked)} disabled={loading} className="rounded border-white/30" />
+                Fully remote only
+              </label>
+            </section>
+
+            <section>
+              <label htmlFor="resume" className={labelLight}>Optional: resume or LinkedIn (context)</label>
+              <textarea id="resume" value={input} onChange={(e) => setInput(e.target.value)} placeholder="Paste resume or LinkedIn text" rows={3} className={`mt-2 ${inputDark} ${inputDarkBg}`} disabled={loading} />
+            </section>
+
+            <button type="submit" disabled={loading} className="w-full rounded-xl px-4 py-3 font-semibold text-white disabled:opacity-50 transition opacity-90 hover:opacity-100 mt-2" style={{ background: "linear-gradient(90deg, #DF338C 0%, #972D57 100%)" }}>
+              {loading ? "Searching…" : "Find jobs"}
             </button>
-            {companyStageOpen && (
-              <div className="absolute left-0 right-0 top-full mt-1 z-10 bg-white border border-slate-300 rounded-lg shadow-lg max-h-52 overflow-y-auto py-2">
-                {COMPANY_STAGE_OPTIONS.map((stage) => (
-                  <label
-                    key={stage}
-                    className="flex items-center gap-2 cursor-pointer text-sm px-3 py-2 hover:bg-slate-50"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={companyStage.includes(stage)}
-                      onChange={() => toggleCompanyStage(stage)}
-                      disabled={loading}
-                      className="rounded border-slate-300"
-                    />
-                    <span className="truncate">{stage}</span>
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
-
-        <section className="space-y-2 w-full min-w-0">
-          <label htmlFor="resume" className={labelClass}>
-            Optional: resume or LinkedIn profile (for context)
-          </label>
-          <textarea
-            id="resume"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Paste resume or LinkedIn text for additional context"
-            rows={4}
-            className={inputClass}
-            disabled={loading}
-          />
-        </section>
-
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full min-w-0 rounded-lg bg-slate-900 px-4 py-3 font-medium text-white hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {loading ? "Searching…" : "Find jobs"}
-        </button>
-      </form>
-
-      {error && (
-        <div className="mt-6 rounded-lg bg-red-100 border-2 border-red-500 px-4 py-3 text-red-900 text-sm font-medium" role="alert">
-          {error}
+          </form>
         </div>
-      )}
 
-      {result && (
-        <section className="mt-10">
-          <h2 className="text-lg font-semibold text-slate-900 mb-4">
-            Jobs for you
-          </h2>
-          {result.jobs && result.jobs.length > 0 ? (
-            <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm text-left text-slate-800">
-                  <thead>
-                    <tr className="bg-slate-100 border-b border-slate-200">
-                      <th className="px-4 py-3 font-semibold text-slate-900">Job Title</th>
-                      <th className="px-4 py-3 font-semibold text-slate-900">Company</th>
-                      <th className="px-4 py-3 font-semibold text-slate-900">Industry</th>
-                      <th className="px-4 py-3 font-semibold text-slate-900">Posted</th>
-                      <th className="px-4 py-3 font-semibold text-slate-900">Compensation</th>
-                      <th className="px-4 py-3 font-semibold text-slate-900">Type</th>
-                      <th className="px-4 py-3 font-semibold text-slate-900">Remote</th>
-                      <th className="px-4 py-3 font-semibold text-slate-900">Apply</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {result.jobs.map((job, i) => (
-                      <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
-                        <td className="px-4 py-3 font-medium">{job.jobTitle}</td>
-                        <td className="px-4 py-3">{job.company}</td>
-                        <td className="px-4 py-3">{job.industry || "—"}</td>
-                        <td className="px-4 py-3">{job.postedDate || "—"}</td>
-                        <td className="px-4 py-3 max-w-[12rem]">{job.compensation || "—"}</td>
-                        <td className="px-4 py-3">{job.employmentType || "—"}</td>
-                        <td className="px-4 py-3">{job.remoteConfirmation || "—"}</td>
-                        <td className="px-4 py-3">
-                          <a
-                            href={job.applicationLink}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-slate-700 underline hover:text-slate-900 break-all"
-                          >
-                            Apply
-                          </a>
-                        </td>
+        {error && (
+          <div className="mb-6 rounded-xl px-4 py-3 text-sm text-white flex items-center gap-2" style={{ background: "#972D57" }} role="alert">
+            <span>⚠</span> {error}
+          </div>
+        )}
+
+        {result && (
+          <div className={`rounded-xl p-6 sm:p-8 shadow-2xl ${cardBg}`} style={{ boxShadow: "0 0 0 1px rgba(223,51,140,0.15), 0 25px 50px -12px rgba(38,0,59,0.5)" }}>
+            <h2 className="text-lg font-semibold text-white mb-4">Jobs for you</h2>
+            {result.jobs && result.jobs.length > 0 ? (
+              <>
+                <div className="overflow-x-auto -mx-2">
+                  <table className="w-full text-sm text-left text-white">
+                    <thead>
+                      <tr className="border-b border-white/20">
+                        <th className="px-4 py-3 font-semibold text-white/90">Job Title</th>
+                        <th className="px-4 py-3 font-semibold text-white/90">Company</th>
+                        <th className="px-4 py-3 font-semibold text-white/90">Industry</th>
+                        <th className="px-4 py-3 font-semibold text-white/90">Posted</th>
+                        <th className="px-4 py-3 font-semibold text-white/90">Compensation</th>
+                        <th className="px-4 py-3 font-semibold text-white/90">Type</th>
+                        <th className="px-4 py-3 font-semibold text-white/90">Remote</th>
+                        <th className="px-4 py-3 font-semibold text-white/90">Apply</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {result.jobs.map((job, i) => (
+                        <tr key={i} className="border-b border-white/10 hover:bg-white/5">
+                          <td className="px-4 py-3 font-medium">{job.jobTitle}</td>
+                          <td className="px-4 py-3"><span className="text-[#c4b5fd]">{job.company}</span></td>
+                          <td className="px-4 py-3">{job.industry || "—"}</td>
+                          <td className="px-4 py-3">{job.postedDate || "—"}</td>
+                          <td className="px-4 py-3 max-w-[10rem]">{job.compensation || "—"}</td>
+                          <td className="px-4 py-3">{job.employmentType || "—"}</td>
+                          <td className="px-4 py-3">{job.remoteConfirmation || "—"}</td>
+                          <td className="px-4 py-3">
+                            <a href={job.applicationLink} target="_blank" rel="noopener noreferrer" className="text-[#DF338C] hover:text-white font-medium">
+                              Apply →
+                            </a>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="mt-4 text-white/60 text-sm">Showing up to {result.jobs.length} results.</p>
+              </>
+            ) : result.jobsText ? (
+              <div className="text-white/90 whitespace-pre-wrap text-sm">
+                {result.jobsText.split("\n").map((line, i) => {
+                  const linkMatch = line.match(/\[?(https?:\/\/[^\s\]\)]+)\]?/);
+                  if (linkMatch) {
+                    const url = linkMatch[1];
+                    const before = line.slice(0, linkMatch.index);
+                    const after = line.slice((linkMatch.index ?? 0) + linkMatch[0].length);
+                    return <span key={i}>{before}<a href={url} target="_blank" rel="noopener noreferrer" className="text-[#DF338C] underline">{url}</a>{after}{"\n"}</span>;
+                  }
+                  return <span key={i}>{line}{"\n"}</span>;
+                })}
               </div>
-            </div>
-          ) : result.jobsText ? (
-            <div className="rounded-lg border border-slate-200 bg-white p-6 text-slate-800 whitespace-pre-wrap">
-              {result.jobsText.split("\n").map((line, i) => {
-                const linkMatch = line.match(/\[?(https?:\/\/[^\s\]\)]+)\]?/);
-                if (linkMatch) {
-                  const url = linkMatch[1];
-                  const before = line.slice(0, linkMatch.index);
-                  const after = line.slice((linkMatch.index ?? 0) + linkMatch[0].length);
-                  return (
-                    <span key={i}>
-                      {before}
-                      <a href={url} target="_blank" rel="noopener noreferrer" className="underline">
-                        {url}
-                      </a>
-                      {after}
-                      {"\n"}
-                    </span>
-                  );
-                }
-                return <span key={i}>{line}{"\n"}</span>;
-              })}
-            </div>
-          ) : null}
-        </section>
-      )}
+            ) : null}
+          </div>
+        )}
+      </div>
     </main>
   );
 }
