@@ -60,12 +60,12 @@ function LoginForm() {
       }}
     >
 
-      {/* Logo — clear/transparent background via blend so black doesn’t show */}
-      <div className="relative z-10 text-center mb-8">
+      {/* Logo — reactive, slightly wider than login box; centered on card */}
+      <div className="relative z-10 w-full max-w-sm mx-auto mb-8 overflow-visible flex justify-center">
         <img
           src="/logo.png"
           alt="Mouser — Hunts the job boards. Brings back the best leads."
-          className="mx-auto w-full max-w-[280px] h-auto drop-shadow-lg [mix-blend-mode:lighten]"
+          className="h-auto drop-shadow-lg [mix-blend-mode:lighten] object-contain w-[calc(100%+2rem)] max-w-[calc(100%+2rem)] block"
         />
       </div>
 
@@ -185,7 +185,7 @@ export default function LoginPage() {
         }}
       >
         <div className="w-full max-w-sm rounded-xl p-8 text-center text-white" style={{ background: "#2B203E" }}>
-          <img src="/logo.png" alt="Mouser" className="mx-auto w-full max-w-[240px] h-auto mb-4 [mix-blend-mode:lighten]" />
+          <img src="/logo.png" alt="Mouser" className="h-auto mb-4 mx-auto [mix-blend-mode:lighten] object-contain w-[calc(100%+2rem)] max-w-[calc(100%+2rem)] block" />
           <p className="text-white/80 text-sm">Loading…</p>
         </div>
       </main>
