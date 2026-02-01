@@ -49,6 +49,7 @@ type Result = {
   jobs?: JobRow[];
   jobsText?: string;
   citations?: Array<{ url: string; title?: string }>;
+  rateLimit?: { used: number; limit: number };
 };
 
 const cardBg = "bg-[#2B203E]/95";
@@ -64,6 +65,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Result | null>(null);
+  const [rateLimit, setRateLimit] = useState<{ used: number; limit: number } | null>(null);
 
   const [timeWindowHours, setTimeWindowHours] = useState(72);
   const [minCompensation, setMinCompensation] = useState(180_000);
@@ -91,6 +93,17 @@ export default function Home() {
   useEffect(() => {
     if (status === "unauthenticated") router.replace("/login");
   }, [status, router]);
+
+  useEffect(() => {
+    if (status !== "authenticated") return;
+    const apiBase = typeof process.env.NEXT_PUBLIC_API_BASE === "string" ? process.env.NEXT_PUBLIC_API_BASE.replace(/\/$/, "") : "";
+    fetch(`${apiBase}/api/jobs`, { method: "GET", credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { rateLimit?: { used: number; limit: number } } | null) => {
+        if (data?.rateLimit) setRateLimit(data.rateLimit);
+      })
+      .catch(() => {});
+  }, [status]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -129,6 +142,9 @@ export default function Home() {
     setResult(null);
     const trimmed = input.trim();
     setLoading(true);
+    setRateLimit((prev) =>
+      prev != null ? { used: Math.min(prev.used + 1, prev.limit), limit: prev.limit } : prev
+    );
     const apiBase = typeof process.env.NEXT_PUBLIC_API_BASE === "string" ? process.env.NEXT_PUBLIC_API_BASE.replace(/\/$/, "") : "";
     const body: Record<string, unknown> = {
       timeWindowHours,
@@ -148,15 +164,18 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      let data: Result | { error?: string };
+      let data: Result | { error?: string; rateLimit?: { used: number; limit: number } };
       try {
         data = await res.json();
       } catch {
         setError(res.ok ? "Invalid response from server." : `Server error (${res.status}). Check terminal and .env.`);
+        setLoading(false);
         return;
       }
+      if (data.rateLimit) setRateLimit(data.rateLimit);
       if (!res.ok) {
         setError((data as { error?: string }).error ?? "Search failed.");
+        setLoading(false);
         return;
       }
       setResult(data as Result);
@@ -176,9 +195,17 @@ export default function Home() {
       <div className="relative z-10 max-w-4xl mx-auto">
         {/* Header */}
         <header className="flex items-center justify-between gap-4 mb-4">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <img src="/logo-cat.png" alt="Mouser" className="object-contain" style={{ width: "1in", height: "1in" }} />
-            <h1 className="text-xl font-semibold text-white">Mouser - Search</h1>
+            <div className="flex flex-col gap-0.5">
+              <div className="flex items-baseline gap-2 flex-wrap">
+                <h1 className="text-xl font-semibold text-white">Mouser - Search</h1>
+                <span className="text-white/60 text-sm">(5 searches per 24 hours per user)</span>
+              </div>
+              <span className="text-white/50 text-xs">
+                {rateLimit != null ? `${rateLimit.used}/${rateLimit.limit} used` : "—/5 used"}
+              </span>
+            </div>
           </div>
           <div className="flex items-center gap-3">
             {session?.user?.name && <span className="text-sm text-white/90">{session.user.name}</span>}

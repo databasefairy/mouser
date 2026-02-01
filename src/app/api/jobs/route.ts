@@ -1,5 +1,47 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
 import { getOpenAIApiKey } from "@/lib/env";
+import { authOptions } from "@/lib/auth";
+
+const RATE_LIMIT_QUERIES = 5;
+const RATE_LIMIT_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+const userQueries: Map<string, { count: number; windowStart: number }> = new Map();
+
+function getUserId(session: { user?: { email?: string | null; id?: string; name?: string | null } } | null): string | null {
+  if (!session?.user) return null;
+  const u = session.user;
+  return (u.email ?? u.id ?? u.name ?? "anonymous") as string;
+}
+
+function getRateLimitStatus(userId: string): { used: number; limit: number } {
+  const now = Date.now();
+  const entry = userQueries.get(userId);
+  if (!entry) return { used: 0, limit: RATE_LIMIT_QUERIES };
+  if (now - entry.windowStart >= RATE_LIMIT_WINDOW_MS) return { used: 0, limit: RATE_LIMIT_QUERIES };
+  return { used: entry.count, limit: RATE_LIMIT_QUERIES };
+}
+
+function checkRateLimit(userId: string): { allowed: boolean; used: number; limit: number; resetInMs: number } {
+  const now = Date.now();
+  const entry = userQueries.get(userId);
+  if (!entry) {
+    userQueries.set(userId, { count: 1, windowStart: now });
+    return { allowed: true, used: 1, limit: RATE_LIMIT_QUERIES, resetInMs: RATE_LIMIT_WINDOW_MS };
+  }
+  if (now - entry.windowStart >= RATE_LIMIT_WINDOW_MS) {
+    userQueries.set(userId, { count: 1, windowStart: now });
+    return { allowed: true, used: 1, limit: RATE_LIMIT_QUERIES, resetInMs: RATE_LIMIT_WINDOW_MS };
+  }
+  if (entry.count >= RATE_LIMIT_QUERIES) {
+    const resetInMs = RATE_LIMIT_WINDOW_MS - (now - entry.windowStart);
+    return { allowed: false, used: entry.count, limit: RATE_LIMIT_QUERIES, resetInMs };
+  }
+  entry.count += 1;
+  const used = entry.count;
+  const resetInMs = RATE_LIMIT_WINDOW_MS - (now - entry.windowStart);
+  return { allowed: true, used, limit: RATE_LIMIT_QUERIES, resetInMs };
+}
 
 type JobSearchVars = {
   timeWindowHours: number;
@@ -118,7 +160,35 @@ If fewer than RESULT_COUNT roles exist, return fewer and explain why in a separa
 CRITICAL — Your response must be ONLY a valid JSON array of objects. No other text before or after, no markdown code fence, no explanation. Just the raw JSON array. Each object must have exactly: jobTitle, company, industry, postedDate, compensation, employmentType, remoteConfirmation, applicationLink.`;
 }
 
+export async function GET() {
+  const session = await getServerSession(authOptions);
+  const userId = getUserId(session);
+  if (!userId) {
+    return NextResponse.json({ error: "Not signed in." }, { status: 401 });
+  }
+  const rateLimit = getRateLimitStatus(userId);
+  return NextResponse.json({ rateLimit });
+}
+
 export async function POST(request: NextRequest) {
+  const session = await getServerSession(authOptions);
+  const userId = getUserId(session);
+  if (!userId) {
+    return NextResponse.json({ error: "Sign in to search." }, { status: 401 });
+  }
+  const { allowed, used, limit, resetInMs } = checkRateLimit(userId);
+  const rateLimit = { used, limit };
+  if (!allowed) {
+    const resetMinutes = Math.ceil(resetInMs / 60_000);
+    return NextResponse.json(
+      {
+        error: `Rate limit exceeded. You can run 5 searches per 24 hours per user. Try again in about ${resetMinutes} minutes.`,
+        rateLimit,
+      },
+      { status: 429, headers: { "Retry-After": String(Math.ceil(resetInMs / 1000)) } }
+    );
+  }
+
   const apiKey = getOpenAIApiKey();
   if (!apiKey) {
     return NextResponse.json(
@@ -224,7 +294,7 @@ export async function POST(request: NextRequest) {
       );
     }
     if (res.status === 404 || res.status === 403) {
-      return tryChatCompletionsFallback(apiKey, instructions, userInput, vars.resultCount);
+      return tryChatCompletionsFallback(apiKey, instructions, userInput, vars.resultCount, rateLimit);
     }
     return NextResponse.json(
       { error: message || "OpenAI request failed." },
@@ -256,16 +326,17 @@ export async function POST(request: NextRequest) {
   let jobs = parseJobsFromText(outputText);
   if (jobs.length > 0) {
     jobs = await filterLiveLinks(jobs);
-    return NextResponse.json({ jobs: jobs.slice(0, vars.resultCount), citations });
+    return NextResponse.json({ jobs: jobs.slice(0, vars.resultCount), citations, rateLimit });
   }
-  return NextResponse.json({ jobsText: outputText, citations });
+  return NextResponse.json({ jobsText: outputText, citations, rateLimit });
 }
 
 async function tryChatCompletionsFallback(
   apiKey: string,
   instructions: string,
   userInput: string,
-  resultCount: number
+  resultCount: number,
+  rateLimit: { used: number; limit: number }
 ): Promise<NextResponse> {
   const fullPrompt = `${instructions}\n\n---\n\n${userInput}`;
   let res: Response;
@@ -336,9 +407,9 @@ async function tryChatCompletionsFallback(
   let jobs = parseJobsFromText(content);
   if (jobs.length > 0) {
     jobs = await filterLiveLinks(jobs);
-    return NextResponse.json({ jobs: jobs.slice(0, resultCount), citations });
+    return NextResponse.json({ jobs: jobs.slice(0, resultCount), citations, rateLimit });
   }
-  return NextResponse.json({ jobsText: content, citations });
+  return NextResponse.json({ jobsText: content, citations, rateLimit });
 }
 
 type JobRow = {
