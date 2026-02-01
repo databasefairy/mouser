@@ -39,7 +39,7 @@ jobs:
         run: npm run build
         env:
           GITHUB_PAGES_BUILD: "true"
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
       - name: Setup Pages
         uses: actions/configure-pages@v4

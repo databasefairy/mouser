@@ -115,7 +115,7 @@ Form grids switch from 1 column to 2–3 columns at `sm` and `lg` as noted in Se
 - **Description (below header):**  
   “Search for remote jobs by target titles and industries. Results are filtered by recency, compensation, and direct apply links.”
 - **Help text:**  
-  “Not connecting? Run `npm run dev`, add `OPENAI_API_KEY` to `.env`, and check /api/health.” (with inline code styling and a link to `/api/health`).
+  “Not connecting? Run `npm run dev`, add `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) to `.env`, and check /api/health.” (with inline code styling and a link to `/api/health`).
 
 ### 5.3 Form — field list and layout
 
@@ -201,7 +201,7 @@ All form fields are full width within their grid cell (`w-full min-w-0`). Labels
 ### 6.2 Errors
 
 - **Login:** “Invalid username or password.”
-- **Home:** From API (e.g. “OPENAI_API_KEY is not set.”) or network (“Could not reach the app…”, “Search failed.”). Shown in the red error block.
+- **Home:** From API (e.g. “GEMINI_API_KEY or GOOGLE_API_KEY is not set.”) or network (“Could not reach the app…”, “Search failed.”). Shown in the red error block.
 
 ### 6.3 Empty / zero selection
 

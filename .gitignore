@@ -11,7 +11,6 @@ dist
 
 # env
 .env
-.env.openai_key
 .env.local
 .env.development.local
 .env.test.local

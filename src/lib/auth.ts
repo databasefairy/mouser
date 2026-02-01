@@ -13,7 +13,7 @@ export const authOptions: NextAuthOptions = {
           }),
         ]
       : []),
-    ...(process.env.MOUSER_LOGIN_PASSWORD
+    ...(process.env.MOUSER_LOGIN_PASSWORD || process.env.MOUSER_RATE_LIMIT_EXEMPT_PASSWORD
       ? [
           CredentialsProvider({
             name: "Password",
@@ -22,9 +22,18 @@ export const authOptions: NextAuthOptions = {
               password: { label: "Password", type: "password" },
             },
             async authorize(credentials) {
-              if (
-                credentials?.password === process.env.MOUSER_LOGIN_PASSWORD
-              ) {
+              const p = credentials?.password?.trim();
+              const exempt = process.env.MOUSER_RATE_LIMIT_EXEMPT_PASSWORD?.trim();
+              const login = process.env.MOUSER_LOGIN_PASSWORD?.trim();
+              if (exempt && p === exempt) {
+                return {
+                  id: "rate_limit_exempt",
+                  name: credentials?.username ?? "User",
+                  email: null,
+                  image: null,
+                };
+              }
+              if (login && p === login) {
                 return {
                   id: "credentials",
                   name: credentials?.username ?? "User",
@@ -42,7 +51,12 @@ export const authOptions: NextAuthOptions = {
     async signIn() {
       return true;
     },
-    async session({ session }) {
+    async jwt({ token, user }) {
+      if (user?.id != null) token.id = user.id;
+      return token;
+    },
+    async session({ session, token }) {
+      if (session.user != null && token.id != null) (session.user as { id?: string }).id = token.id as string;
       return session;
     },
   },
