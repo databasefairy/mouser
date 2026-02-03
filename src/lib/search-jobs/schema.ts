@@ -88,6 +88,7 @@ export const excludedCountsSchema = z.object({
   duplicate: z.number().optional(),
   not_whitelisted: z.number().optional(),
   bad_classification: z.number().optional(),
+  invalid_shape: z.number().optional(),
 });
 
 export type ExcludedCounts = z.infer<typeof excludedCountsSchema>;

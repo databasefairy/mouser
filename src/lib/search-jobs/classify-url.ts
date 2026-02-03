@@ -30,6 +30,9 @@ const APPLY_INDICATORS = [
   /ashbyhq\.com\/.*\/apply/i,
   /applytojob\.com/i,
   /myworkdayjobs\.com\/.*\/apply/i,
+  /icims\.com\/.*\/apply/i,
+  /smartrecruiters\.com\/.*\/apply/i,
+  /jobvite\.com\/.*\/apply/i,
 ];
 
 const LISTING_INDICATORS = [
@@ -47,6 +50,24 @@ const SEARCH_PAGE_INDICATORS = [
   /search\s*jobs/i,
   /filters?\s*(ui|panel)/i,
   /(show|view)\s*\d+\s*jobs/i,
+  /search\s*results/i,
+  /\d+\s*jobs?\s*found/i,
+  /\d+\s*results/i,
+  /sort\s*by/i,
+  /filter\s*by/i,
+  /refine\s*search/i,
+  // LinkedIn search patterns
+  /linkedin\.com\/jobs\/search/i,
+  /linkedin\.com\/jobs\?/i,
+  // Indeed search patterns
+  /indeed\.com\/jobs\?/i,
+  /indeed\.com\/q-/i,
+  // Glassdoor search patterns
+  /glassdoor\.com\/Job\/.*-jobs/i,
+  // ZipRecruiter search patterns
+  /ziprecruiter\.com\/jobs\/search/i,
+  // Google Jobs patterns
+  /google\.com\/search.*&ibp=htl;jobs/i,
 ];
 
 const COMPANY_JOBS_INDEX_INDICATORS = [
@@ -55,6 +76,13 @@ const COMPANY_JOBS_INDEX_INDICATORS = [
   /(many|multiple)\s*job\s*cards/i,
   /open\s*positions/i,
   /careers?\s*at\s*\w+/i,
+  /we\s*are\s*hiring/i,
+  /current\s*openings/i,
+  /browse\s*all\s*jobs/i,
+  /view\s*all\s*openings/i,
+  /explore\s*opportunities/i,
+  /\/careers\/?$/i,
+  /\/jobs\/?$/i,
 ];
 
 const AGGREGATOR_INDICATORS = [
@@ -62,7 +90,52 @@ const AGGREGATOR_INDICATORS = [
   /(lots\s*of|many)\s*unrelated\s*job\s*links/i,
   /multiple\s*locations/i,
   /seo\s*boilerplate/i,
+  /see\s*full\s*job\s*description\s*on/i,
+  /view\s*on\s*company\s*website/i,
+  /apply\s*externally/i,
 ];
+
+// URL patterns that strongly indicate a specific page type
+const URL_PATTERNS = {
+  apply_flow: [
+    /\/apply\/?(\?|$)/i,
+    /greenhouse\.io\/[^/]+\/jobs\/\d+.*\/application/i,
+    /lever\.co\/[^/]+\/[a-f0-9-]+\/apply/i,
+    /myworkdayjobs\.com\/.*\/job\/.*\/apply/i,
+    /icims\.com\/jobs\/\d+\/job$/i, // iCIMS direct job page (not search)
+  ],
+  listing: [
+    // Greenhouse: boards.greenhouse.io, job-boards.greenhouse.io, etc.
+    /greenhouse\.io\/[^/]+\/jobs\/\d+/i,
+    /lever\.co\/[^/]+\/[a-f0-9-]+/i,
+    /ashbyhq\.com\/[^/]+\/[a-f0-9-]+/i,  // jobs.ashbyhq.com/company/uuid format
+    /myworkdayjobs\.com\/.*\/job\/[^/]+/i,
+    /smartrecruiters\.com\/[^/]+\/\d+/i,
+    /jobvite\.com\/[^/]+\/job\/[a-zA-Z0-9]+/i,
+    /linkedin\.com\/jobs\/view\/\d+/i,
+    /indeed\.com\/viewjob/i,
+    /glassdoor\.com\/job-listing\//i,
+    /workable\.com\/view\/[^/]+\/[^/]+/i,  // jobs.workable.com/view/company/job
+  ],
+  search_page: [
+    /linkedin\.com\/jobs\/search/i,
+    /linkedin\.com\/jobs\?/i,
+    /indeed\.com\/jobs\?/i,
+    /indeed\.com\/q-.*-jobs/i,
+    /glassdoor\.com\/Job\/.*-jobs-SRCH/i,
+    /ziprecruiter\.com\/jobs\/search/i,
+    /monster\.com\/jobs\/search/i,
+    /careerbuilder\.com\/jobs/i,
+  ],
+  company_jobs_index: [
+    /\/careers\/?$/i,
+    /\/jobs\/?$/i,
+    /greenhouse\.io\/[^/]+$/i, // Company's greenhouse main page (no job ID)
+    /greenhouse\.io\/[^/]+\/?(?:\?|#)/i, // Greenhouse company page with query params (e.g. ?error=true)
+    /greenhouse\.io\/[^/]+\?error=/i, // Greenhouse error redirect (job not found -> company page)
+    /lever\.co\/[^/]+\/?$/i, // Company's lever main page
+  ],
+};
 
 export function classifyUrl(params: {
   url: string;
@@ -86,7 +159,42 @@ export function classifyUrl(params: {
     return { page_type: "unknown", confidence: 0.9, reasons };
   }
 
-  // Apply flow
+  // Check URL patterns first (strongest signal) - these override content-based detection
+  for (const pattern of URL_PATTERNS.search_page) {
+    if (pattern.test(final_url) || pattern.test(url)) {
+      reasons.push("URL matches search page pattern");
+      return { page_type: "search_page", confidence: 0.95, reasons };
+    }
+  }
+  
+  for (const pattern of URL_PATTERNS.apply_flow) {
+    if (pattern.test(final_url) || pattern.test(url)) {
+      applyScore += 3;
+      reasons.push("URL matches apply flow pattern");
+      break;
+    }
+  }
+  
+  for (const pattern of URL_PATTERNS.listing) {
+    if (pattern.test(final_url) || pattern.test(url)) {
+      listingScore += 2;
+      reasons.push("URL matches job listing pattern");
+      break;
+    }
+  }
+  
+  // Check for company jobs index URL patterns (but don't override if we already found listing/apply)
+  if (applyScore === 0 && listingScore === 0) {
+    for (const pattern of URL_PATTERNS.company_jobs_index) {
+      if (pattern.test(final_url) || pattern.test(url)) {
+        companyIndexScore += 2;
+        reasons.push("URL matches company jobs index pattern");
+        break;
+      }
+    }
+  }
+
+  // Apply flow content indicators
   for (const p of APPLY_INDICATORS) {
     if (p.test(combined)) {
       applyScore += 1;
@@ -99,7 +207,7 @@ export function classifyUrl(params: {
     reasons.push("URL path contains /apply");
   }
 
-  // Listing
+  // Listing content indicators
   for (const p of LISTING_INDICATORS) {
     if (p.test(excerptLower)) {
       listingScore += 1;
@@ -107,8 +215,13 @@ export function classifyUrl(params: {
       break;
     }
   }
+  // Single-job URL (e.g. greenhouse /jobs/5237890003, wellfound /jobs/123-title): treat as listing so we don't misclassify when page has "open positions" in footer
+  if (/\/jobs\/\d+|\/jobs\/[a-z0-9-]+(?:-[a-z0-9-]+)*/i.test(final_url) || /\/jobs\/\d+|\/jobs\/[a-z0-9-]+(?:-[a-z0-9-]+)*/i.test(url)) {
+    listingScore += 1;
+    if (!reasons.some((r) => r.includes("listing"))) reasons.push("URL path suggests single job listing");
+  }
 
-  // Search page
+  // Search page content indicators (check these before returning)
   for (const p of SEARCH_PAGE_INDICATORS) {
     if (p.test(combined)) {
       searchScore += 1;
@@ -121,7 +234,7 @@ export function classifyUrl(params: {
     reasons.push("query param suggests search");
   }
 
-  // Company jobs index
+  // Company jobs index content indicators
   for (const p of COMPANY_JOBS_INDEX_INDICATORS) {
     if (p.test(excerptLower)) {
       companyIndexScore += 1;
@@ -130,7 +243,7 @@ export function classifyUrl(params: {
     }
   }
 
-  // Aggregator
+  // Aggregator content indicators
   for (const p of AGGREGATOR_INDICATORS) {
     if (p.test(excerptLower)) {
       aggregatorScore += 1;

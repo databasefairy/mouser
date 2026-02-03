@@ -38,6 +38,8 @@ type SearchResponse = {
   results: JobResult[];
   excluded_counts: ExcludedCounts;
   missing_info: string[];
+  /** Limitless only: raw Gemini Phase 1 response before repair/parse (for debugging truncation/format). */
+  raw_phase1_response?: string;
 };
 
 const cardBg = "bg-[#2B203E]/95";
@@ -66,6 +68,7 @@ export default function Home() {
     const t = setTimeout(() => router.replace("/login"), 2000);
     return () => clearTimeout(t);
   }, [status, router]);
+
   const [topN, setTopN] = useState(10);
   const [industries, setIndustries] = useState<string[]>([]);
   const [zipCode, setZipCode] = useState("");
@@ -79,12 +82,22 @@ export default function Home() {
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [dryRun, setDryRun] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [searchStatus, setSearchStatus] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [errorDetails, setErrorDetails] = useState<{ parse_error?: string; raw_preview?: string } | null>(null);
   const [data, setData] = useState<SearchResponse | null>(null);
   const [industriesOpen, setIndustriesOpen] = useState(false);
-  const [expandedNotes, setExpandedNotes] = useState<Set<number>>(new Set());
   const industriesRef = useRef<HTMLDivElement>(null);
+  const hasSetLimitlessDefaults = useRef(false);
+
+  // Default form values for limitless profile: Product Manager titles, remote only, salary above 50k
+  useEffect(() => {
+    if (!isLimitless || hasSetLimitlessDefaults.current) return;
+    hasSetLimitlessDefaults.current = true;
+    setTitles(["Product Manager", "Technical Product Manager", "Senior Product Manager"]);
+    setRemoteOnly(true);
+    setSalaryMin(50_000);
+  }, [isLimitless]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -131,6 +144,24 @@ export default function Home() {
     setErrorDetails(null);
     setData(null);
     setLoading(true);
+    setSearchStatus("🔍 Searching for jobs...");
+    
+    // Status update timer to show progress
+    const statusMessages = [
+      "🔍 Searching for jobs...",
+      "🌐 Querying job boards...",
+      "📋 Analyzing job listings...",
+      "🔗 Verifying job links are active...",
+      "✅ Checking if positions are still open...",
+      "🔄 Finding more verified listings...",
+      "📊 Ranking results...",
+    ];
+    let statusIndex = 0;
+    const statusInterval = setInterval(() => {
+      statusIndex = (statusIndex + 1) % statusMessages.length;
+      setSearchStatus(statusMessages[statusIndex]);
+    }, 3000);
+    
     const apiBase = typeof process.env.NEXT_PUBLIC_API_BASE === "string" ? process.env.NEXT_PUBLIC_API_BASE.replace(/\/$/, "") : "";
     try {
       const payload: Record<string, unknown> = {
@@ -168,6 +199,8 @@ export default function Home() {
       setError(err instanceof Error ? err.message : "Network error.");
       setErrorDetails(null);
     } finally {
+      clearInterval(statusInterval);
+      setSearchStatus("");
       setLoading(false);
     }
   }
@@ -359,8 +392,27 @@ export default function Home() {
             )}
 
             <button type="submit" disabled={loading} className="w-full rounded-xl px-4 py-3 font-semibold text-white disabled:opacity-50 transition opacity-90 hover:opacity-100 mt-2" style={{ background: "linear-gradient(90deg, #DF338C 0%, #972D57 100%)" }}>
-              {loading ? "Searching…" : "Find jobs"}
+              {loading ? searchStatus || "Searching…" : "Find jobs"}
             </button>
+            
+            {loading && (
+              <div className="mt-6 text-center">
+                <div className="flex flex-col items-center gap-4">
+                  {/* Black bar behind the cat video */}
+                  <div className="w-full flex items-center justify-center py-2" style={{ backgroundColor: '#010001' }}>
+                    <video 
+                      src="/loading-cat.mp4" 
+                      autoPlay 
+                      loop 
+                      muted 
+                      playsInline
+                      className="h-24 w-auto"
+                    />
+                  </div>
+                  <span className="text-white/80 text-sm">We&apos;re searching the whole internet for the perfect job for you, this may take a while....</span>
+                </div>
+              </div>
+            )}
           </form>
         </div>
 
@@ -388,10 +440,14 @@ export default function Home() {
           </div>
         )}
 
-        {data && (
+        {data && (() => {
+          const results = Array.isArray(data.results) ? data.results : [];
+          const isDryRun = data.query_used?.dry_run === true;
+          const hasExcluded = Object.entries(data.excluded_counts || {}).some(([, v]) => typeof v === "number" && v > 0);
+          return (
           <div className={`rounded-xl p-6 sm:p-8 shadow-2xl ${cardBg}`} style={{ boxShadow: "0 0 0 1px rgba(223,51,140,0.15), 0 25px 50px -12px rgba(38,0,59,0.5)" }}>
-            <h2 className="text-lg font-semibold text-white mb-4">Results ({data.results.length})</h2>
-            {data.missing_info.length > 0 && (
+            <h2 className="text-lg font-semibold text-white mb-4">Results ({results.length})</h2>
+            {Array.isArray(data.missing_info) && data.missing_info.length > 0 && (
               <p className="text-white/70 text-sm mb-4">{data.missing_info.join(" ")}</p>
             )}
             <p className="text-white/60 text-xs mb-4">
@@ -401,10 +457,21 @@ export default function Home() {
                 return entries.map(([k, v]) => `${k}=${v}`).join(", ");
               })()}
             </p>
-            {data.results.length === 0 && !data.query_used?.dry_run ? (
+            {isLimitless && data.raw_phase1_response != null && (
+              <details className="mb-4 text-sm text-white/90">
+                <summary className="cursor-pointer font-medium select-none">Phase 1 raw response (before repair/parse)</summary>
+                <pre className="mt-2 p-3 rounded-lg bg-black/20 text-xs overflow-x-auto whitespace-pre-wrap break-words max-h-64 overflow-y-auto border border-white/10">
+                  {data.raw_phase1_response}
+                </pre>
+              </details>
+            )}
+            {isLimitless && results.length === 0 && !isDryRun && data.raw_phase1_response != null && (
+              <p className="text-white/60 text-xs mb-4">Phase 1 returned jobs but all were excluded after verification. Check Excluded counts above and Phase 1 raw response for details.</p>
+            )}
+            {results.length === 0 && !isDryRun ? (
               <div className="text-white/70 space-y-2">
                 <p>No jobs matched after verification and filters.</p>
-                {Object.entries(data.excluded_counts || {}).some(([, v]) => typeof v === "number" && v > 0) ? (
+                {hasExcluded ? (
                   <p className="text-white/60 text-xs">
                     Jobs were excluded by: not_direct_apply (incomplete or invalid apply URL, e.g. only "https:"), not_active (apply link 404/410), not_whitelisted (domain not allowed), bad_classification, duplicate, or invalid shape. Try again; if not_direct_apply is high, the model may be truncating URLs—we are working on improving this.
                   </p>
@@ -412,7 +479,7 @@ export default function Home() {
                   <p className="text-white/60 text-xs">Model returned no jobs. Try again or broaden search criteria (industries, titles).</p>
                 )}
               </div>
-            ) : data.query_used?.dry_run ? (
+            ) : isDryRun ? (
               <div className="space-y-4 text-sm text-white/90">
                 <p className="font-medium">Dry run: generated prompts (no verification run).</p>
                 <pre className="rounded-lg bg-white/5 p-4 whitespace-pre-wrap break-words text-xs overflow-x-auto">
@@ -426,73 +493,75 @@ export default function Home() {
                 <table className="w-full text-sm text-left text-white">
                   <thead>
                     <tr className="border-b border-white/20">
-                      <th className="px-4 py-3 font-semibold text-white/90">Score</th>
-                      <th className="px-4 py-3 font-semibold text-white/90">Title</th>
+                      <th className="px-4 py-3 font-semibold text-white/90">Job Title</th>
                       <th className="px-4 py-3 font-semibold text-white/90">Company</th>
-                      <th className="px-4 py-3 font-semibold text-white/90">Salary</th>
-                      <th className="px-4 py-3 font-semibold text-white/90">Apply</th>
-                      <th className="px-4 py-3 font-semibold text-white/90">Listing page</th>
-                      <th className="px-4 py-3 font-semibold text-white/90">Apply page</th>
-                      <th className="px-4 py-3 font-semibold text-white/90">Resume match</th>
-                      <th className="px-4 py-3 font-semibold text-white/90">Notes</th>
+                      <th className="px-4 py-3 font-semibold text-white/90">Estimated Salary</th>
+                      <th className="px-4 py-3 font-semibold text-white/90">Call Back Score</th>
+                      <th className="px-4 py-3 font-semibold text-white/90">Application link</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {data.results.map((job, i) => (
-                      <React.Fragment key={i}>
-                        <tr className="border-b border-white/10 hover:bg-white/5">
-                          <td className="px-4 py-3 align-top font-medium">{job.callback_likelihood_score}</td>
-                          <td className="px-4 py-3 font-medium align-top">{job.job_title}</td>
-                          <td className="px-4 py-3 align-top"><span className="text-[#c4b5fd]">{job.company}</span></td>
-                          <td className="px-4 py-3 align-top">
-                            {job.salary
-                              ? [
-                                  job.salary.min != null && `${job.salary.min}`,
-                                  job.salary.max != null && `${job.salary.max}`,
-                                  job.salary.currency ?? "",
-                                  job.salary.period ?? "",
-                                  job.salary.is_estimated && "(est.)",
-                                ]
-                                  .filter(Boolean)
-                                  .join(" ") || "—"
-                              : "—"}
-                          </td>
-                          <td className="px-4 py-3 align-top">
-                            <a href={job.direct_apply_link} target="_blank" rel="noopener noreferrer" className="text-[#DF338C] hover:text-white font-medium">
-                              Apply →
-                            </a>
-                          </td>
-                          <td className="px-4 py-3 align-top text-white/80">{job.listing_url_classification?.page_type ?? "—"}</td>
-                          <td className="px-4 py-3 align-top text-white/80">{job.direct_apply_classification?.page_type ?? "—"}</td>
-                          <td className="px-4 py-3 align-top max-w-[12rem] truncate" title={job.resume_match_summary}>{job.resume_match_summary ?? "—"}</td>
-                          <td className="px-4 py-3 align-top">
-                            {((job.notes?.length ?? 0) + (job.score_rationale?.length ?? 0)) > 0 ? (
-                              <button
-                                type="button"
-                                onClick={() => setExpandedNotes((prev) => (prev.has(i) ? new Set([...prev].filter((x) => x !== i)) : new Set([...prev, i])))}
-                                className="text-[#DF338C] hover:text-white text-xs"
-                              >
-                                {expandedNotes.has(i) ? "Hide" : "Show"}
-                              </button>
-                            ) : "—"}
-                          </td>
-                        </tr>
-                        {expandedNotes.has(i) && ((job.notes?.length ?? 0) + (job.score_rationale?.length ?? 0)) > 0 && (
-                          <tr key={`${i}-exp`} className="border-b border-white/10 bg-white/5">
-                            <td colSpan={9} className="px-4 py-3 text-sm text-white/80">
-                              {(job.notes?.length ?? 0) > 0 && <ul className="list-disc list-inside">{job.notes!.map((n, j) => <li key={j}>{n}</li>)}</ul>}
-                              {(job.score_rationale?.length ?? 0) > 0 && <ul className="list-disc list-inside mt-1">{job.score_rationale!.map((r, j) => <li key={j}>{r}</li>)}</ul>}
-                            </td>
-                          </tr>
-                        )}
-                      </React.Fragment>
+                    {results.map((job, i) => (
+                      <tr key={i} className="border-b border-white/10 hover:bg-white/5">
+                        <td className="px-4 py-3 align-top font-medium">{job.job_title}</td>
+                        <td className="px-4 py-3 align-top"><span className="text-[#c4b5fd]">{job.company}</span></td>
+                        <td className="px-4 py-3 align-top">
+                          {job.salary && (job.salary.min != null || job.salary.max != null)
+                            ? (() => {
+                                const fmt = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: job.salary?.currency || "USD", maximumFractionDigits: 0 });
+                                const min = job.salary.min != null ? fmt(job.salary.min) : null;
+                                const max = job.salary.max != null ? fmt(job.salary.max) : null;
+                                const range = min && max ? `${min} – ${max}` : min || max || "";
+                                const period = job.salary.period ? `/${job.salary.period === "yearly" ? "yr" : job.salary.period}` : "";
+                                return (
+                                  <span className={job.salary.is_estimated ? "text-white/70" : ""}>
+                                    {range}{period}
+                                    {job.salary.is_estimated && <span className="ml-1 text-white/50 text-xs">(est.)</span>}
+                                  </span>
+                                );
+                              })()
+                            : <span className="text-white/40">—</span>}
+                        </td>
+                        <td className="px-4 py-3 align-top font-medium">{job.callback_likelihood_score}</td>
+                        <td className="px-4 py-3 align-top">
+                          {job.direct_apply_link && job.direct_apply_link.startsWith("http") && !job.direct_apply_link.includes("localhost") ? (
+                            <div className="flex flex-col gap-1">
+                              <a href={job.direct_apply_link} target="_blank" rel="noopener noreferrer" className="text-[#DF338C] hover:text-white font-medium">
+                                Apply →
+                              </a>
+                              {job.notes && job.notes.length > 0 && (
+                                <>
+                                  {/* Page type labels */}
+                                  {job.notes.filter(n => 
+                                    n.startsWith("📋") || n.startsWith("✅") || n.startsWith("🔍") || 
+                                    n.startsWith("🏢") || n.startsWith("📰") || n.startsWith("❓")
+                                  ).map((note, i) => (
+                                    <span key={`type-${i}`} className="inline-flex items-center gap-1 text-xs text-green-400/90 font-medium">{note}</span>
+                                  ))}
+                                  {/* Warning notes */}
+                                  {job.notes.filter(n => n.startsWith("⚠️")).map((note, i) => (
+                                    <span key={`warn-${i}`} className="text-yellow-400/80 text-xs">{note}</span>
+                                  ))}
+                                  {/* Info notes */}
+                                  {job.notes.filter(n => n.startsWith("ℹ️")).map((note, i) => (
+                                    <span key={`info-${i}`} className="text-blue-400/70 text-xs">{note}</span>
+                                  ))}
+                                </>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-white/50">—</span>
+                          )}
+                        </td>
+                      </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             )}
           </div>
-        )}
+          );
+        })()}
       </div>
     </main>
   );

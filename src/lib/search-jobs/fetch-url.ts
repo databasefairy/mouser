@@ -33,6 +33,11 @@ const ATS_HOST_PATTERNS = [
   /bamboohr\.com/i,
 ];
 
+export type JobLinkWithTitle = {
+  url: string;
+  title?: string;
+};
+
 export type FetchUrlResult = {
   url: string;
   final_url: string;
@@ -40,6 +45,8 @@ export type FetchUrlResult = {
   content_type: string;
   html_excerpt: string;
   detected_apply_links: string[];
+  /** Job links with their associated titles (for matching when upgrading) */
+  job_links_with_titles?: JobLinkWithTitle[];
 };
 
 export async function fetchUrl(url: string): Promise<FetchUrlResult> {
@@ -116,6 +123,7 @@ export async function fetchUrl(url: string): Promise<FetchUrlResult> {
 
       result.html_excerpt = html.slice(0, HTML_EXCERPT_CHARS);
       result.detected_apply_links = extractApplyLinks(html);
+      result.job_links_with_titles = extractJobLinksWithTitles(html);
       return result;
     } catch (err) {
       clearTimeout(timeoutId);
@@ -156,5 +164,197 @@ function extractApplyLinks(html: string): string[] {
     }
   }
 
+  // Greenhouse-specific: extract job links from listing pages
+  // Greenhouse uses various subdomains: boards.greenhouse.io, job-boards.greenhouse.io, etc.
+  // Job links are in format: /company/jobs/ID or full URL
+  
+  // First, try to find the base URL from the page for relative links
+  const greenhouseBaseMatch = html.match(/https?:\/\/[^"'\s]*greenhouse\.io/i);
+  const greenhouseBaseUrl = greenhouseBaseMatch ? greenhouseBaseMatch[0] : "";
+  
+  // Look for relative Greenhouse job links like href="/company/jobs/123"
+  const relativeGreenhouseRegex = /href\s*=\s*["'](\/[^"'\/]+\/jobs\/\d+)[^"']*["']/gi;
+  relativeGreenhouseRegex.lastIndex = 0;
+  while ((m = relativeGreenhouseRegex.exec(html)) !== null) {
+    const relativePath = m[1].trim();
+    if (greenhouseBaseUrl && relativePath) {
+      const fullUrl = greenhouseBaseUrl + relativePath;
+      if (!seen.has(fullUrl)) {
+        seen.add(fullUrl);
+        links.push(fullUrl);
+      }
+    }
+  }
+
+  // Look for full Greenhouse job URLs anywhere in the HTML
+  const greenhouseFullUrlRegex = /https?:\/\/[^"'\s<>]*greenhouse\.io\/[^"'\s<>\/]+\/jobs\/\d+/gi;
+  greenhouseFullUrlRegex.lastIndex = 0;
+  while ((m = greenhouseFullUrlRegex.exec(html)) !== null) {
+    let href = m[0].trim();
+    // Clean up any trailing characters that might have been captured
+    href = href.replace(/[)\]}>].*$/, "");
+    if (href && !seen.has(href)) {
+      seen.add(href);
+      links.push(href);
+    }
+  }
+
+  // Ashby-specific: extract job links from listing pages
+  // Ashby URLs are: jobs.ashbyhq.com/{company}/{uuid}
+  const ashbyBaseMatch = html.match(/https?:\/\/jobs\.ashbyhq\.com/i);
+  const ashbyBaseUrl = ashbyBaseMatch ? ashbyBaseMatch[0] : "";
+  
+  // Look for relative Ashby job links like href="/company/uuid"
+  // Ashby UUIDs are 36 chars: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+  const relativeAshbyRegex = /href\s*=\s*["'](\/[^"'\/]+\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})[^"']*["']/gi;
+  relativeAshbyRegex.lastIndex = 0;
+  while ((m = relativeAshbyRegex.exec(html)) !== null) {
+    const relativePath = m[1].trim();
+    if (ashbyBaseUrl && relativePath) {
+      const fullUrl = ashbyBaseUrl + relativePath;
+      if (!seen.has(fullUrl)) {
+        seen.add(fullUrl);
+        links.push(fullUrl);
+      }
+    }
+  }
+
+  // Look for full Ashby job URLs anywhere in the HTML
+  const ashbyFullUrlRegex = /https?:\/\/jobs\.ashbyhq\.com\/[^"'\s<>\/]+\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/gi;
+  ashbyFullUrlRegex.lastIndex = 0;
+  while ((m = ashbyFullUrlRegex.exec(html)) !== null) {
+    let href = m[0].trim();
+    href = href.replace(/[)\]}>].*$/, "");
+    if (href && !seen.has(href)) {
+      seen.add(href);
+      links.push(href);
+    }
+  }
+
   return links;
+}
+
+/**
+ * Clean up job title text by removing HTML tags and location info.
+ */
+function cleanJobTitle(titleText: string): string {
+  // Remove HTML tags, extra whitespace
+  let title = titleText
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  
+  // Try to extract just the job title (before common location patterns)
+  const locationPatterns = [
+    /\s*(Remote|United States|US|New York|San Francisco|Los Angeles|Chicago|Boston|Austin|Denver|Seattle|Atlanta|London|Berlin|Toronto|Hybrid|On-site)/i,
+    /\s*[A-Z][a-z]+,\s*[A-Z]{2}\s*$/,  // City, ST format
+  ];
+  
+  for (const pattern of locationPatterns) {
+    const match = title.match(pattern);
+    if (match && match.index && match.index > 10) {
+      title = title.slice(0, match.index).trim();
+      break;
+    }
+  }
+  
+  return title;
+}
+
+/**
+ * Extract job links with their associated titles from HTML.
+ * This is used to match job titles when upgrading from a company jobs page.
+ * Supports Greenhouse and Ashby job boards.
+ */
+function extractJobLinksWithTitles(html: string): JobLinkWithTitle[] {
+  const results: JobLinkWithTitle[] = [];
+  const seen = new Set<string>();
+  
+  // --- Greenhouse ---
+  const greenhouseBaseMatch = html.match(/https?:\/\/[^"'\s]*greenhouse\.io/i);
+  const greenhouseBaseUrl = greenhouseBaseMatch ? greenhouseBaseMatch[0] : "";
+  
+  // Pattern to match anchor tags with Greenhouse job links
+  const greenhouseAnchorRegex = /<a\s+[^>]*href\s*=\s*["']((?:https?:\/\/[^"']*greenhouse\.io)?\/[^"']+\/jobs\/\d+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  
+  let m: RegExpExecArray | null;
+  greenhouseAnchorRegex.lastIndex = 0;
+  while ((m = greenhouseAnchorRegex.exec(html)) !== null) {
+    let href = m[1].trim();
+    const titleText = m[2] || "";
+    
+    // Convert relative URLs to full URLs
+    if (href.startsWith("/") && greenhouseBaseUrl) {
+      href = greenhouseBaseUrl + href;
+    }
+    
+    if (!href.startsWith("http") || seen.has(href)) continue;
+    seen.add(href);
+    
+    const title = cleanJobTitle(titleText);
+    if (title) {
+      results.push({ url: href, title });
+    }
+  }
+  
+  // Also try to find full Greenhouse URLs with surrounding context for titles
+  const greenhouseContextRegex = />([^<]{5,100})<\/[^>]+>\s*<a[^>]+href\s*=\s*["'](https?:\/\/[^"']*greenhouse\.io\/[^"']+\/jobs\/\d+)["']/gi;
+  greenhouseContextRegex.lastIndex = 0;
+  while ((m = greenhouseContextRegex.exec(html)) !== null) {
+    const title = cleanJobTitle(m[1]);
+    const href = m[2].trim();
+    
+    if (href && title && !seen.has(href)) {
+      seen.add(href);
+      results.push({ url: href, title });
+    }
+  }
+  
+  // --- Ashby ---
+  const ashbyBaseUrl = "https://jobs.ashbyhq.com";
+  const ashbyUuidPattern = "[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}";
+  
+  // Pattern to match anchor tags with Ashby job links
+  // Ashby format: <a href="/company/uuid">Job Title</a> or full URL
+  const ashbyAnchorRegex = new RegExp(
+    `<a\\s+[^>]*href\\s*=\\s*["']((?:https?:\\/\\/jobs\\.ashbyhq\\.com)?\\/[^"'\\/]+\\/${ashbyUuidPattern})["'][^>]*>([\\s\\S]*?)<\\/a>`,
+    "gi"
+  );
+  
+  ashbyAnchorRegex.lastIndex = 0;
+  while ((m = ashbyAnchorRegex.exec(html)) !== null) {
+    let href = m[1].trim();
+    const titleText = m[2] || "";
+    
+    // Convert relative URLs to full URLs
+    if (href.startsWith("/")) {
+      href = ashbyBaseUrl + href;
+    }
+    
+    if (!href.startsWith("http") || seen.has(href)) continue;
+    seen.add(href);
+    
+    const title = cleanJobTitle(titleText);
+    if (title) {
+      results.push({ url: href, title });
+    }
+  }
+  
+  // Also try to find full Ashby URLs with surrounding context for titles
+  const ashbyContextRegex = new RegExp(
+    `>([^<]{5,100})<\\/[^>]+>\\s*<a[^>]+href\\s*=\\s*["'](https?:\\/\\/jobs\\.ashbyhq\\.com\\/[^"'\\/]+\\/${ashbyUuidPattern})["']`,
+    "gi"
+  );
+  ashbyContextRegex.lastIndex = 0;
+  while ((m = ashbyContextRegex.exec(html)) !== null) {
+    const title = cleanJobTitle(m[1]);
+    const href = m[2].trim();
+    
+    if (href && title && !seen.has(href)) {
+      seen.add(href);
+      results.push({ url: href, title });
+    }
+  }
+  
+  return results;
 }

@@ -56,6 +56,15 @@ export const ALLOWED_DOMAINS = new Set([
   "apply.workable.com",
   "workable.com",
   "careers-page.com",
+  "vertexaisearch.cloud.google.com", // Google Search grounding redirects; we follow to final_url when possible
+  "leverege.com",
+  // Company career sites (subdomains match: careers.servicenow.com, jobs.netflix.com, etc.)
+  "capitalonecareers.com",
+  "servicenow.com",
+  "airbnb.com",
+  "coinbase.com",
+  "aha.io",
+  "netflix.com",
 ]);
 
 /** Normalize host for comparison: lowercase, strip www. */
