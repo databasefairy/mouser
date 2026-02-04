@@ -437,6 +437,9 @@ function requestCount(needed: number): number {
 /** Maximum iterations to prevent infinite loops */
 const MAX_SEARCH_ITERATIONS = 5;
 
+/** Number of parallel Gemini calls per iteration */
+const PARALLEL_SEARCHES = 2;
+
 function buildInstructions(input: SearchJobsInput): string {
   const industriesStr =
     input.industries.length > 0
@@ -518,7 +521,7 @@ function detectTargetSeniority(titles: string[]): { level: string; description: 
  * Uses Google Search to find job URLs, URL Context to verify pages are real job listings.
  * Includes callback score logic to prioritize high-quality opportunities.
  */
-function buildSearchOnlyPrompt(input: SearchJobsInput, options?: { excludeUrls?: Set<string>; iteration?: number; neededCount?: number }): string {
+function buildSearchOnlyPrompt(input: SearchJobsInput, options?: { excludeUrls?: Set<string>; iteration?: number; neededCount?: number; parallelIndex?: number }): string {
   const titlesStr = input.titles.length > 0 ? input.titles.join(" OR ") : "Product Manager";
   const locationStr = input.remote_only ? "remote" : (input.zip_code ? `near ${input.zip_code}` : "");
   const neededCount = options?.neededCount ?? input.top_n ?? 10;
@@ -529,6 +532,15 @@ function buildSearchOnlyPrompt(input: SearchJobsInput, options?: { excludeUrls?:
   // Detect target seniority from search titles
   const targetSeniority = detectTargetSeniority(input.titles);
   
+  // Add search variation hints for parallel searches to get diverse results
+  const searchVariations = [
+    "", // Default search
+    "Focus on RECENTLY POSTED jobs (last 48 hours). ",
+    "Focus on STARTUP and SMALLER COMPANIES. ",
+    "Focus on jobs with EXPLICIT SALARY listed. ",
+  ];
+  const variationHint = options?.parallelIndex !== undefined ? searchVariations[options.parallelIndex % searchVariations.length] : "";
+  
   // Build exclusion list for subsequent iterations (limit to 10 to avoid URL limit issues)
   let exclusionNote = "";
   if (options?.excludeUrls && options.excludeUrls.size > 0) {
@@ -538,7 +550,7 @@ ${excludeList.map(u => `- ${u}`).join("\n")}`;
   }
 
   return `Find ${requestNum} ${locationStr} ${titlesStr}${industryNote} job postings${salaryNote} that are currently open.
-
+${variationHint}
 ## YOUR GOAL
 Find jobs with the HIGHEST CALLBACK SCORE - positions where the applicant is most likely to get a response.
 The user is searching for: ${targetSeniority.description}
@@ -860,22 +872,28 @@ export async function POST(request: NextRequest) {
       if (neededCount <= 0) break;
       
       console.log(`[search-jobs] Iteration ${iteration}/${MAX_SEARCH_ITERATIONS}: need ${neededCount} more verified jobs (have ${verifiedJobs.length}/${input.top_n})`);
-      emitStatus(`🔍 Iteration ${iteration}/${MAX_SEARCH_ITERATIONS} — need ${neededCount} more`);
+      emitStatus(`🔍 Iteration ${iteration}/${MAX_SEARCH_ITERATIONS} — need ${neededCount} more (${PARALLEL_SEARCHES} parallel searches)`);
       
-      // Build prompt with exclusions from previous iterations
-      const searchPrompt = buildSearchOnlyPrompt(input, {
-        excludeUrls: seenUrls,
-        iteration,
-        neededCount,
+      // Build prompts for parallel searches with slight variations
+      const searchPromises = Array.from({ length: PARALLEL_SEARCHES }, (_, idx) => {
+        const searchPrompt = buildSearchOnlyPrompt(input, {
+          excludeUrls: seenUrls,
+          iteration,
+          neededCount: Math.ceil(neededCount / PARALLEL_SEARCHES) + 3, // Request a few extra
+          parallelIndex: idx, // Pass index for prompt variation
+        });
+        return runGeminiSearchOnly(geminiKey, searchPrompt);
       });
       
-      // Call Gemini
-      const geminiResult = await runGeminiSearchOnly(geminiKey, searchPrompt);
-      const outputText = geminiResult.outputText;
+      // Run parallel Gemini calls
+      const geminiResults = await Promise.all(searchPromises);
+      
+      // Combine outputs from all parallel searches
+      const outputText = geminiResults.map(r => r.outputText).join("\n");
       
       // Store first iteration's raw response for debugging
       if (iteration === 1) {
-        rawPhase1Response = outputText;
+        rawPhase1Response = geminiResults.map((r, i) => `--- Parallel Search ${i + 1} ---\n${r.outputText}`).join("\n\n");
       }
       
       if (!outputText.trim()) {
