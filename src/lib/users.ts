@@ -67,7 +67,7 @@ async function getUsersFromSupabase(): Promise<User[]> {
   
   const { data, error } = await supabase
     .from("users")
-    .select("username, password, role, search_count, last_search_date, created_at");
+    .select("username, password_hash, role, search_count, last_search_date, created_at");
   
   if (error) {
     console.error("[users] Supabase error:", error.message);
@@ -76,7 +76,7 @@ async function getUsersFromSupabase(): Promise<User[]> {
   
   return (data || []).map((row) => ({
     username: row.username,
-    password: row.password,
+    password: row.password_hash,
     role: row.role as UserRole,
     searchCount: row.search_count || 0,
     lastSearchDate: row.last_search_date || "",
@@ -90,7 +90,7 @@ async function findUserInSupabase(username: string): Promise<User | null> {
   
   const { data, error } = await supabase
     .from("users")
-    .select("username, password, role, search_count, last_search_date, created_at")
+    .select("username, password_hash, role, search_count, last_search_date, created_at")
     .ilike("username", username)
     .single();
   
@@ -98,7 +98,7 @@ async function findUserInSupabase(username: string): Promise<User | null> {
   
   return {
     username: data.username,
-    password: data.password,
+    password: data.password_hash,
     role: data.role as UserRole,
     searchCount: data.search_count || 0,
     lastSearchDate: data.last_search_date || "",
@@ -120,11 +120,11 @@ async function verifyUserInSupabase(username: string, password: string): Promise
   
   if (error || !data) return null;
   
-  const row = data as { username: string; password: string; role: string; search_count: number; last_search_date: string; created_at: string };
+  const row = data as { username: string; password_hash: string; role: string; search_count: number; last_search_date: string; created_at: string };
   
   return {
     username: row.username,
-    password: row.password, // This is the hashed password
+    password: row.password_hash, // This is the hashed password
     role: row.role as UserRole,
     searchCount: row.search_count || 0,
     lastSearchDate: row.last_search_date || "",
@@ -140,7 +140,7 @@ async function createUserInSupabase(username: string, password: string, role: Us
     .from("users")
     .insert({
       username,
-      password,
+      password_hash: password, // Will be auto-hashed by trigger
       role,
       search_count: 0,
       last_search_date: "",
@@ -156,7 +156,7 @@ async function createUserInSupabase(username: string, password: string, role: Us
   
   return {
     username: data.username,
-    password: data.password,
+    password: data.password_hash,
     role: data.role as UserRole,
     searchCount: data.search_count || 0,
     lastSearchDate: data.last_search_date || "",
@@ -164,7 +164,7 @@ async function createUserInSupabase(username: string, password: string, role: Us
   };
 }
 
-async function updateUserInSupabase(username: string, updates: Partial<{ password: string; role: UserRole; search_count: number; last_search_date: string }>): Promise<boolean> {
+async function updateUserInSupabase(username: string, updates: Partial<{ password_hash: string; role: UserRole; search_count: number; last_search_date: string }>): Promise<boolean> {
   const supabase = getSupabase();
   if (!supabase) return false;
   
@@ -417,7 +417,7 @@ export function updateUserRole(username: string, role: UserRole): boolean {
  */
 export async function updateUserPasswordAsync(username: string, newPassword: string): Promise<boolean> {
   if (getStorageMode() === "supabase") {
-    return updateUserInSupabase(username, { password: newPassword });
+    return updateUserInSupabase(username, { password_hash: newPassword });
   }
   
   const users = getUsersFromLocal();
