@@ -1,18 +1,9 @@
 import type { NextAuthOptions } from "next-auth";
-import GitHubProvider from "next-auth/providers/github";
 import CredentialsProvider from "next-auth/providers/credentials";
 
 export const authOptions: NextAuthOptions = {
   debug: process.env.NODE_ENV !== "production",
   providers: [
-    ...(process.env.GITHUB_ID && process.env.GITHUB_SECRET
-      ? [
-          GitHubProvider({
-            clientId: process.env.GITHUB_ID,
-            clientSecret: process.env.GITHUB_SECRET,
-          }),
-        ]
-      : []),
     ...(process.env.MOUSER_LOGIN_PASSWORD || process.env.MOUSER_RATE_LIMIT_EXEMPT_PASSWORD
       ? [
           CredentialsProvider({
