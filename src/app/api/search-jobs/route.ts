@@ -428,11 +428,11 @@ function checkRateLimit(ip: string): boolean {
 /**
  * Request count per iteration.
  * With URL Context, Gemini verifies pages before returning them.
- * Google's limit is 20 URLs per request.
- * With PARALLEL_SEARCHES=2, each search should request max 8 URLs to stay under 20 combined.
+ * Google's limit is 20 URLs per request (including search result URLs).
+ * With PARALLEL_SEARCHES=2, cap at 6 per search to stay safely under 20.
  */
 function requestCount(needed: number): number {
-  return Math.min(8, Math.max(needed, 5));
+  return Math.min(6, Math.max(needed, 4));
 }
 
 /** Maximum iterations to prevent infinite loops */
@@ -886,7 +886,7 @@ export async function POST(request: NextRequest) {
         const searchPrompt = buildSearchOnlyPrompt(input, {
           excludeUrls: seenUrls,
           iteration,
-          neededCount: Math.min(8, Math.ceil(neededCount / PARALLEL_SEARCHES) + 2), // Cap at 8 per search to stay under 20 URL limit
+          neededCount: Math.min(6, Math.ceil(neededCount / PARALLEL_SEARCHES) + 1), // Cap at 6 per search to stay under 20 URL limit
           parallelIndex: idx, // Pass index for prompt variation
         });
         return runGeminiSearchOnly(geminiKey, searchPrompt);
