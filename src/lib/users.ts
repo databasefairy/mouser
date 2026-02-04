@@ -86,7 +86,10 @@ async function getUsersFromSupabase(): Promise<User[]> {
 
 async function findUserInSupabase(username: string): Promise<User | null> {
   const supabase = getSupabase();
-  if (!supabase) return null;
+  if (!supabase) {
+    console.error("[users] Supabase client not available");
+    return null;
+  }
   
   const { data, error } = await supabase
     .from("users")
@@ -94,7 +97,15 @@ async function findUserInSupabase(username: string): Promise<User | null> {
     .ilike("username", username)
     .single();
   
-  if (error || !data) return null;
+  if (error) {
+    console.error("[users] Supabase findUser error:", error.message, "for username:", username);
+    return null;
+  }
+  
+  if (!data) {
+    console.error("[users] User not found in Supabase:", username);
+    return null;
+  }
   
   return {
     username: data.username,

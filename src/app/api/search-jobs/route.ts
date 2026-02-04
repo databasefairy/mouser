@@ -719,8 +719,9 @@ export async function POST(request: NextRequest) {
     const isAdmin = sessionRole === "admin";
     const isLimitless = sessionRole === "power_user" || sessionRole === "admin" || sessionRole === "rate_limit_exempt";
     
-    // Track search count and enforce daily limits for basic users
-    if (username) {
+    // Track search count and enforce daily limits for basic users only
+    // Admin and power_user have unlimited searches - skip the check
+    if (username && !isLimitless) {
       const searchResult = await incrementSearchCountAsync(username);
       if (!searchResult.allowed) {
         return NextResponse.json(
@@ -728,6 +729,11 @@ export async function POST(request: NextRequest) {
           { status: 429 }
         );
       }
+    } else if (username && isLimitless) {
+      // Still track search count for stats, but don't block
+      incrementSearchCountAsync(username).catch((err) => {
+        console.error("[search-jobs] Failed to track search count:", err);
+      });
     }
     
     // Debug features (dry_run, raw_phase1_response) only for admins
