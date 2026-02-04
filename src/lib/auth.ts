@@ -1,6 +1,7 @@
 import type { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
-import { authenticateUser, initializeDefaultAdmin, type UserRole } from "./users";
+import { authenticateUser, authenticateUserAsync, initializeDefaultAdmin, type UserRole } from "./users";
+import { isSupabaseConfigured } from "./supabase";
 
 // Initialize default admin on module load
 initializeDefaultAdmin();
@@ -20,8 +21,11 @@ export const authOptions: NextAuthOptions = {
         
         if (!username || !password) return null;
         
-        // Authenticate against user database - username and password must match
-        const user = authenticateUser(username, password);
+        // Use async authentication when Supabase is configured
+        const user = isSupabaseConfigured()
+          ? await authenticateUserAsync(username, password)
+          : authenticateUser(username, password);
+        
         if (user) {
           return {
             id: user.role, // Store role as ID for easy access

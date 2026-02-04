@@ -10,12 +10,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import {
-  getUsers,
-  createUser,
-  updateUserRole,
-  updateUserPassword,
-  deleteUser,
-  getSearchStats,
+  getUsersAsync,
+  createUserAsync,
+  updateUserRoleAsync,
+  updateUserPasswordAsync,
+  deleteUserAsync,
+  getSearchStatsAsync,
   type UserRole,
 } from "@/lib/users";
 
@@ -43,13 +43,14 @@ export async function GET(request: NextRequest) {
   const { isAdmin, error } = await requireAdmin(request);
   if (!isAdmin) return error;
   
-  const users = getUsers().map((u) => ({
+  const allUsers = await getUsersAsync();
+  const users = allUsers.map((u) => ({
     username: u.username,
     role: u.role,
     createdAt: u.createdAt,
   }));
   
-  const stats = getSearchStats();
+  const stats = await getSearchStatsAsync();
   
   return NextResponse.json({ users, stats });
 }
@@ -82,7 +83,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid role" }, { status: 400 });
     }
     
-    const user = createUser(username.trim(), password, (role as UserRole) || "user");
+    const user = await createUserAsync(username.trim(), password, (role as UserRole) || "user");
     if (!user) {
       return NextResponse.json({ error: "Username already exists" }, { status: 409 });
     }
@@ -113,7 +114,7 @@ export async function PATCH(request: NextRequest) {
       if (password.length < 4) {
         return NextResponse.json({ error: "Password must be at least 4 characters" }, { status: 400 });
       }
-      const success = updateUserPassword(username, password);
+      const success = await updateUserPasswordAsync(username, password);
       if (!success) {
         return NextResponse.json({ error: "User not found" }, { status: 404 });
       }
@@ -126,7 +127,7 @@ export async function PATCH(request: NextRequest) {
       if (!validRoles.includes(role as UserRole)) {
         return NextResponse.json({ error: "Invalid role" }, { status: 400 });
       }
-      const success = updateUserRole(username, role as UserRole);
+      const success = await updateUserRoleAsync(username, role as UserRole);
       if (!success) {
         return NextResponse.json({ error: "User not found" }, { status: 404 });
       }
@@ -153,7 +154,7 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "Username is required" }, { status: 400 });
   }
   
-  const success = deleteUser(username);
+  const success = await deleteUserAsync(username);
   if (!success) {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }

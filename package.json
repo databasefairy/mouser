@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@google/genai": "^1.39.0",
+    "@supabase/supabase-js": "^2.94.1",
     "axios": "^1.13.4",
     "mammoth": "^1.6.0",
     "next": "^15.5.11",

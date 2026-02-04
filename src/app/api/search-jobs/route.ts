@@ -11,7 +11,7 @@ import { z } from "zod";
 import axios from "axios";
 import { authOptions, isLimitless as checkIsLimitless, isAdmin as checkIsAdmin } from "@/lib/auth";
 import { getGeminiApiKey } from "@/lib/env";
-import { incrementSearchCount, findUser } from "@/lib/users";
+import { incrementSearchCountAsync } from "@/lib/users";
 import { fetchUrl, type JobLinkWithTitle } from "@/lib/search-jobs/fetch-url";
 import { runGeminiSearchOnly } from "@/lib/search-jobs/gemini-agent";
 import { classifyUrl } from "@/lib/search-jobs/classify-url";
@@ -709,7 +709,7 @@ export async function POST(request: NextRequest) {
     
     // Track search count and enforce daily limits for basic users
     if (username) {
-      const searchResult = incrementSearchCount(username);
+      const searchResult = await incrementSearchCountAsync(username);
       if (!searchResult.allowed) {
         return NextResponse.json(
           { error: `Daily search limit reached (${searchResult.limit}/day). Upgrade to Power User for unlimited searches.` },
