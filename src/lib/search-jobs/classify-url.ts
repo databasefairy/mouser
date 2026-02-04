@@ -134,6 +134,9 @@ const URL_PATTERNS = {
     /greenhouse\.io\/[^/]+\/?(?:\?|#)/i, // Greenhouse company page with query params (e.g. ?error=true)
     /greenhouse\.io\/[^/]+\?error=/i, // Greenhouse error redirect (job not found -> company page)
     /lever\.co\/[^/]+\/?$/i, // Company's lever main page
+    /breezy\.hr\/?$/i, // Breezy root openings page
+    /breezy\.hr\/[^/]+\/?$/i, // Breezy company openings page (no job slug)
+    /wearemotive\.com\/joinus\/?$/i, // Motive careers index (no listings)
   ],
 };
 

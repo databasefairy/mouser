@@ -30,6 +30,7 @@ import {
 } from "@/lib/search-jobs/json-repair";
 import { estimateSalary, hasSalaryData } from "@/lib/search-jobs/salary-estimate";
 import { estimateCallbackScore } from "@/lib/search-jobs/callback-score";
+import { isHostWhitelisted } from "@/lib/search-jobs/whitelist";
 
 // --- Title matching for Greenhouse job upgrades ---
 
@@ -44,6 +45,28 @@ function normalizeTitle(title: string): string {
     .replace(/\s*\([^)]*\)\s*/g, " ") // Remove parenthetical info
     .replace(/\s*,\s*[^,]+$/, "") // Remove trailing location
     .trim();
+}
+
+function extractTitleFromHtml(html: string): string {
+  if (!html) return "";
+  const h1Match = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
+  if (h1Match?.[1]) {
+    return h1Match[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  }
+  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  if (titleMatch?.[1]) {
+    return titleMatch[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  }
+  return "";
+}
+
+function titlesRoughlyMatch(targetTitle: string, candidateTitle: string): boolean {
+  if (!targetTitle || !candidateTitle) return false;
+  const normalizedTarget = normalizeTitle(targetTitle);
+  const normalizedCandidate = normalizeTitle(candidateTitle);
+  if (!normalizedTarget || !normalizedCandidate) return false;
+  if (normalizedCandidate.includes(normalizedTarget) || normalizedTarget.includes(normalizedCandidate)) return true;
+  return titleSimilarity(targetTitle, candidateTitle) > 0.5;
 }
 
 /**
@@ -185,6 +208,17 @@ const DEAD_KEYWORDS = [
   "this position is no longer open",
   // Workable specific
   "this job is not available",
+  // Workday specific
+  "job requisition is no longer available",
+  "requisition is no longer available",
+  "job requisition has been filled",
+  "this job has been filled",
+  "we are no longer accepting applications for this position",
+  "the job you are looking for has been filled",
+  "job has been filled",
+  "job no longer available",
+  "job no longer exists",
+  "requisition no longer exists",
   // BambooHR specific
   "job listing not found",
 ];
@@ -250,11 +284,30 @@ async function isLinkActive(url: string): Promise<VerifyResult> {
       if (response.status !== 200) {
         return { active: true, reason: "valid", statusCode: response.status, durationMs, retries: retryCount };
       }
-      const htmlContent = (typeof response.data === "string" ? response.data : "").toLowerCase();
+      const htmlRaw = typeof response.data === "string" ? response.data : "";
+      const htmlContent = htmlRaw.toLowerCase();
+      const isAshby = url.includes("ashbyhq.com");
+      const isWorkday = url.includes("myworkdayjobs.com");
+      const pageTitle = extractTitleFromHtml(htmlRaw);
+      const normalizedTitle = pageTitle.toLowerCase().trim();
       
       // Check for dead keywords in text content
       const isDead = DEAD_KEYWORDS.some((keyword) => htmlContent.includes(keyword));
-      if (isDead) {
+      const isWorkdaySearchFallback =
+        isWorkday &&
+        /\/job\//i.test(url) &&
+        (normalizedTitle === "job search" || normalizedTitle === "search jobs" || normalizedTitle === "careers");
+      const isAshbyGenericJobsPage =
+        isAshby && (normalizedTitle === "jobs" || normalizedTitle.startsWith("jobs @"));
+      const isAshbyRealJobPage =
+        isAshby && !!normalizedTitle && !isAshbyGenericJobsPage;
+      if (isAshbyGenericJobsPage) {
+        return { active: false, reason: "dead_keyword", statusCode: 200, durationMs, retries: retryCount };
+      }
+      if (isWorkdaySearchFallback) {
+        return { active: false, reason: "dead_keyword", statusCode: 200, durationMs, retries: retryCount };
+      }
+      if (isDead && !isAshbyRealJobPage) {
         return { active: false, reason: "dead_keyword", statusCode: 200, durationMs, retries: retryCount };
       }
       
@@ -420,7 +473,7 @@ function buildUserMessage(input: SearchJobsInput): string {
   const titlesStr = input.titles.length > 0 ? input.titles.join(", ") : "any";
   const resumeHint = input.resume_text?.trim() ? " Use the resume context below ONLY for ranking and match scoring; add a short resume_match_summary per job. Do not output resume content." : "";
   const askFor = requestCount(input.top_n);
-  let msg = `Find at least ${askFor} jobs matching: industries [${input.industries.join(", ") || "any"}], titles [${titlesStr}], salary_min ${input.salary_min}, remote_only ${input.remote_only}. We need at least ${input.top_n} to pass verification—return ${askFor} or more. For each job: call fetch_url for the apply page, then copy the EXACT 'url' or 'final_url' from that response into direct_apply_link. Do not type URLs from memory; paste the full URL from fetch_url. Never output "https:" or a truncated URL. Verify with fetch_url and classify_url; return only active, whitelisted links.${resumeHint} Output a JSON array of job objects only. CRITICAL: direct_apply_link = exact URL from fetch_url (e.g. https://boards.greenhouse.io/company/jobs/123); never "https:" alone.`;
+  let msg = `Find at least ${askFor} jobs matching: industries [${input.industries.join(", ") || "any"}], titles [${titlesStr}], salary_min ${input.salary_min}, remote_only ${input.remote_only}. We need at least ${input.top_n} to pass verification—return ${askFor} or more. For each job: call fetch_url on the job description page (NOT the apply form), then copy the EXACT 'url' or 'final_url' from that response into direct_apply_link. Avoid /apply or /application URLs; link to the job description where the user can then choose to apply. Do not type URLs from memory; paste the full URL from fetch_url. Never output "https:" or a truncated URL. Verify with fetch_url and classify_url; return only active links. Prefer whitelisted/known ATS domains, but if you cannot find enough results, include other reputable company career sites.${resumeHint} Output a JSON array of job objects only. CRITICAL: direct_apply_link = exact URL from fetch_url (e.g. https://boards.greenhouse.io/company/jobs/123); never "https:" alone. Balance results across ATS sources—do NOT return mostly Greenhouse. Include a mix from greenhouse, lever, ashby, workday, smartrecruiters, icims, and company career sites, and keep any single ATS under ~50% of results.`;
   if (input.resume_text?.trim()) {
     const resume = input.resume_text.trim().slice(0, 40_000);
     msg += `\n\n---\nRESUME CONTEXT (use only for ranking and resume_match_summary; do not echo or output this text):\n${resume}`;
@@ -447,12 +500,13 @@ ${excludeList.map(u => `- ${u}`).join("\n")}`;
   return `Search for ${requestNum} ${locationStr} ${titlesStr} job postings that are currently open and actively accepting applications.
 
 ### REQUIREMENTS
-1. Return REAL job posting URLs from the actual company or job board (greenhouse.io, lever.co, linkedin.com/jobs/view/*, indeed.com/viewjob*, etc.)
+1. Return REAL job posting URLs from the actual company or job board (greenhouse.io, lever.co, ashbyhq.com, myworkdayjobs.com, smartrecruiters.com, icims.com, linkedin.com/jobs/view/*, indeed.com/viewjob*, etc.). Prefer known ATS domains, but if you cannot find enough, include other reputable company career sites. Use the job description page, not the application form (avoid /apply or /application URLs).
 2. NEVER return google.com URLs, redirect URLs, or search result page URLs
 3. Each URL must be a SPECIFIC job posting page, not a search results page or company careers homepage
 4. Include salary information if visible in the job posting
-5. Only return jobs that are CURRENTLY OPEN and accepting applications${options?.iteration && options.iteration > 1 ? `
-6. This is search iteration ${options.iteration}. Find DIFFERENT jobs than previous iterations.` : ""}
+5. Only return jobs that are CURRENTLY OPEN and accepting applications
+6. Balance results across ATS sources. Do NOT return mostly Greenhouse. Keep any single ATS under ~50% of results and include a mix of company career sites.${options?.iteration && options.iteration > 1 ? `
+7. This is search iteration ${options.iteration}. Find DIFFERENT jobs than previous iterations.` : ""}
 
 ### GOOD URL EXAMPLES
 - https://boards.greenhouse.io/company/jobs/123456
@@ -796,6 +850,22 @@ export async function POST(request: NextRequest) {
           excluded.duplicate = (excluded.duplicate ?? 0) + 1;
           continue;
         }
+
+        // Soft whitelist: prefer known ATS domains, allow others after iteration 3
+        const allowOutsideWhitelist = iteration >= 3;
+        if (link && !isHostWhitelisted(link) && !allowOutsideWhitelist) {
+          excluded.not_whitelisted = (excluded.not_whitelisted ?? 0) + 1;
+          continue;
+        }
+
+        // Breezy restriction: only allow the base URL https://jobs.breezy.hr/
+        if (link && /(^|\.)breezy\.hr$/i.test(new URL(link).hostname)) {
+          const breezyPath = new URL(link).pathname;
+          if (breezyPath !== "/" && breezyPath !== "") {
+            excluded.not_whitelisted = (excluded.not_whitelisted ?? 0) + 1;
+            continue;
+          }
+        }
         
         // Fetch and classify the URL
         if (link && link.length >= 20 && !link.includes("localhost")) {
@@ -856,6 +926,40 @@ export async function POST(request: NextRequest) {
               });
               classification.reasons.push("Followed redirect to actual job");
             }
+
+            // Prefer job description pages over application flows when possible
+            if (classification.page_type === "apply_flow") {
+              const listingCandidateFromUrl = link
+                .replace(/\/apply\/?(?:\?.*)?$/i, "")
+                .replace(/\/application\/?(?:\?.*)?$/i, "")
+                .replace(/\?application=.*$/i, "");
+              const listingCandidates = [
+                listingCandidateFromUrl,
+                listing,
+              ].filter((u): u is string => typeof u === "string" && u.startsWith("http"));
+              for (const candidate of listingCandidates) {
+                if (!candidate || candidate === link) continue;
+                try {
+                  const candidateFetch = await fetchUrl(candidate);
+                  const candidateClass = classifyUrl({
+                    url: candidate,
+                    html_excerpt: (candidateFetch?.html_excerpt as string) ?? "",
+                    final_url: (candidateFetch?.final_url ?? candidateFetch?.url ?? candidate) as string,
+                    status_code: (candidateFetch?.status_code as number) ?? 0,
+                  });
+                  if (candidateClass.page_type === "listing") {
+                    link = candidate;
+                    raw.direct_apply_link = candidate;
+                    raw.directApplyLink = candidate;
+                    classification = candidateClass;
+                    classification.reasons.push("Preferred job description page");
+                    break;
+                  }
+                } catch {
+                  // ignore candidate fetch errors
+                }
+              }
+            }
             
             // Handle stale job IDs that redirect to error/company pages
             // Try to find a matching job by title on the company's jobs page
@@ -895,11 +999,41 @@ export async function POST(request: NextRequest) {
                 continue;
               }
             } else if (isErrorPage && originalHadJobId) {
-              // Error page but no job links to match against
+              // Error page but no job links with titles to match against
               const atsName = isGreenhouseJob(link) ? "Greenhouse" : "Ashby";
-              console.log(`[classify] ${atsName} job not found: ${link} -> ${finalUrl} - no jobs to match`);
-              excluded.not_active = (excluded.not_active ?? 0) + 1;
-              continue;
+              console.log(`[classify] ${atsName} job not found: ${link} -> ${finalUrl} - attempting fallback match`);
+              const candidateLinks = (fetchRes.detected_apply_links ?? []).filter((u) => isSpecificJobUrl(u)).slice(0, 5);
+              let matched = false;
+              for (const candidateLink of candidateLinks) {
+                if (!candidateLink || seenUrls.has(candidateLink)) continue;
+                try {
+                  const candidateFetch = await fetchUrl(candidateLink);
+                  const candidateTitle = extractTitleFromHtml((candidateFetch?.html_excerpt as string) ?? "");
+                  if (titlesRoughlyMatch(jobTitle ?? "", candidateTitle)) {
+                    console.log(`[classify] Fallback match: "${candidateTitle}" -> ${candidateLink}`);
+                    seenUrls.add(candidateLink);
+                    link = candidateLink;
+                    raw.direct_apply_link = candidateLink;
+                    raw.directApplyLink = candidateLink;
+                    classification = classifyUrl({
+                      url: candidateLink,
+                      html_excerpt: (candidateFetch?.html_excerpt as string) ?? "",
+                      final_url: (candidateFetch?.final_url ?? candidateFetch?.url ?? candidateLink) as string,
+                      status_code: (candidateFetch?.status_code as number) ?? 0,
+                    });
+                    classification.reasons.push("Matched by title from fallback fetch");
+                    matched = true;
+                    break;
+                  }
+                } catch {
+                  // Ignore failed candidate fetch
+                }
+              }
+              if (!matched) {
+                console.log(`[classify] No fallback match found for "${jobTitle}" - marking as dead`);
+                excluded.not_active = (excluded.not_active ?? 0) + 1;
+                continue;
+              }
             }
             
             // Try to upgrade search/index pages to actual job listings
@@ -942,6 +1076,12 @@ export async function POST(request: NextRequest) {
                   // Try next candidate
                 }
               }
+            }
+
+            // Exclude search/index pages from results (do not return these)
+            if (classification.page_type === "search_page" || classification.page_type === "company_jobs_index") {
+              excluded.bad_classification = (excluded.bad_classification ?? 0) + 1;
+              continue;
             }
             
             if (UPGRADE_PAGE_TYPES.has(originalPageType)) {

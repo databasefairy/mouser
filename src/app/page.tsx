@@ -83,6 +83,7 @@ export default function Home() {
   const [dryRun, setDryRun] = useState(false);
   const [loading, setLoading] = useState(false);
   const [searchStatus, setSearchStatus] = useState<string>("");
+  const [statusLog, setStatusLog] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [errorDetails, setErrorDetails] = useState<{ parse_error?: string; raw_preview?: string } | null>(null);
   const [data, setData] = useState<SearchResponse | null>(null);
@@ -144,23 +145,26 @@ export default function Home() {
     setErrorDetails(null);
     setData(null);
     setLoading(true);
-    setSearchStatus("🔍 Searching for jobs...");
-    
-    // Status update timer to show progress
-    const statusMessages = [
-      "🔍 Searching for jobs...",
-      "🌐 Querying job boards...",
-      "📋 Analyzing job listings...",
-      "🔗 Verifying job links are active...",
-      "✅ Checking if positions are still open...",
-      "🔄 Finding more verified listings...",
-      "📊 Ranking results...",
+    setStatusLog([]);
+    const logStatus = (msg: string) => {
+      setSearchStatus(msg);
+      setStatusLog((prev) => [...prev, msg]);
+    };
+    logStatus("🧭 Preparing search request...");
+
+    const longWaitMessages = [
+      "⏳ Patience. The good ones hide.",
+      "🧭 Covering more ground.",
+      "🔍 Tracking leads.",
+      "🧹 Filtering out dead leads.",
+      "📈 Calculating call back score.",
     ];
-    let statusIndex = 0;
-    const statusInterval = setInterval(() => {
-      statusIndex = (statusIndex + 1) % statusMessages.length;
-      setSearchStatus(statusMessages[statusIndex]);
-    }, 3000);
+    let longWaitIndex = 0;
+    const longWaitInterval = setInterval(() => {
+      const msg = longWaitMessages[longWaitIndex % longWaitMessages.length]!;
+      longWaitIndex += 1;
+      logStatus(msg);
+    }, 30_000);
     
     const apiBase = typeof process.env.NEXT_PUBLIC_API_BASE === "string" ? process.env.NEXT_PUBLIC_API_BASE.replace(/\/$/, "") : "";
     try {
@@ -176,30 +180,41 @@ export default function Home() {
         ...(isLimitless && dryRun ? { dry_run: true } : {}),
       };
       if (resumeFile) {
+        logStatus("📎 Encoding resume file...");
         const { base64, mime } = await fileToBase64(resumeFile);
         payload.resume_file_base64 = base64;
         payload.resume_file_mime = mime;
       }
+      logStatus("🐈‍⬛ Hunting for jobs...");
       const res = await fetch(`${apiBase}/api/search-jobs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
         credentials: "same-origin",
       });
+      logStatus("✅ Fresh jobs caught...");
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         const msg = (json as { error?: string }).error;
-        setError(msg && msg.trim() ? msg : `Request failed (${res.status}).`);
+        const errMsg = msg && msg.trim() ? msg : `Request failed (${res.status}).`;
+        setError(errMsg);
+        logStatus(`⚠️ ${errMsg}`);
         const details = json as { parse_error?: string; raw_preview?: string };
         setErrorDetails({ parse_error: details.parse_error, raw_preview: details.raw_preview });
         return;
       }
-      setData(json as SearchResponse);
+      logStatus("🧩 Processing results...");
+      const responseData = json as SearchResponse;
+      setData(responseData);
+      const jobCount = Array.isArray(responseData.jobs) ? responseData.jobs.length : 0;
+      logStatus(`✅ Found ${jobCount} verified listings.`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Network error.");
+      const errMsg = err instanceof Error ? err.message : "Network error.";
+      setError(errMsg);
+      logStatus(`⚠️ ${errMsg}`);
       setErrorDetails(null);
     } finally {
-      clearInterval(statusInterval);
+      clearInterval(longWaitInterval);
       setSearchStatus("");
       setLoading(false);
     }
