@@ -48,15 +48,16 @@ const inputDark =
 const inputDarkBg = "bg-white/[0.08]";
 const labelLight = "block text-sm font-medium text-white/90";
 
-/** Limitless search profile = rate_limit_exempt (signed in with MOUSER_RATE_LIMIT_EXEMPT_PASSWORD). Debug features only for this profile. */
-function isLimitlessProfile(session: { user?: { id?: string | null } } | null): boolean {
-  return session?.user?.id === "rate_limit_exempt";
+/** Check if user is an admin (unlimited + debug + admin panel) */
+function isAdminProfile(session: { user?: { id?: string | null; role?: string | null } } | null): boolean {
+  const role = session?.user?.role || session?.user?.id;
+  return role === "admin";
 }
 
 export default function Home() {
   const router = useRouter();
   const { data: session, status } = useSession();
-  const isLimitless = isLimitlessProfile(session as { user?: { id?: string | null } } | null);
+  const isAdmin = isAdminProfile(session as { user?: { id?: string | null; role?: string | null } } | null);
 
   useEffect(() => {
     if (status === "unauthenticated") router.replace("/login");
@@ -84,21 +85,26 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [searchStatus, setSearchStatus] = useState<string>("");
   const [statusLog, setStatusLog] = useState<string[]>([]);
+  const [progressCount, setProgressCount] = useState(0);
+  const [progressStats, setProgressStats] = useState<{ looked_at: number; dead_links: number; excluded_other: number }>({ looked_at: 0, dead_links: 0, excluded_other: 0 });
+  const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [errorDetails, setErrorDetails] = useState<{ parse_error?: string; raw_preview?: string } | null>(null);
   const [data, setData] = useState<SearchResponse | null>(null);
   const [industriesOpen, setIndustriesOpen] = useState(false);
   const industriesRef = useRef<HTMLDivElement>(null);
   const hasSetLimitlessDefaults = useRef(false);
+  const [notifyEnabled, setNotifyEnabled] = useState(false);
+  const notifyEnabledRef = useRef(false); // Ref to access in async callback
 
-  // Default form values for limitless profile: Product Manager titles, remote only, salary above 50k
+  // Default form values for admin profile: Product Manager titles, remote only, salary above 50k
   useEffect(() => {
-    if (!isLimitless || hasSetLimitlessDefaults.current) return;
+    if (!isAdmin || hasSetLimitlessDefaults.current) return;
     hasSetLimitlessDefaults.current = true;
     setTitles(["Product Manager", "Technical Product Manager", "Senior Product Manager"]);
     setRemoteOnly(true);
     setSalaryMin(50_000);
-  }, [isLimitless]);
+  }, [isAdmin]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -107,6 +113,25 @@ export default function Home() {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  function startProgressAnimation(target: number) {
+    if (progressTimerRef.current) {
+      clearInterval(progressTimerRef.current);
+      progressTimerRef.current = null;
+    }
+    const safeTarget = Math.max(0, target);
+    let current = 0;
+    setProgressCount(0);
+    if (safeTarget === 0) return;
+    progressTimerRef.current = setInterval(() => {
+      current += 1;
+      setProgressCount(current);
+      if (current >= safeTarget) {
+        if (progressTimerRef.current) clearInterval(progressTimerRef.current);
+        progressTimerRef.current = null;
+      }
+    }, 120);
+  }
 
   function toggleIndustry(industry: string) {
     setIndustries((prev) =>
@@ -139,6 +164,43 @@ export default function Home() {
     });
   }
 
+  async function enableNotifications() {
+    if (!("Notification" in window)) {
+      alert("This browser does not support notifications");
+      return;
+    }
+    
+    if (Notification.permission === "granted") {
+      setNotifyEnabled(true);
+      notifyEnabledRef.current = true;
+    } else if (Notification.permission !== "denied") {
+      const permission = await Notification.requestPermission();
+      if (permission === "granted") {
+        setNotifyEnabled(true);
+        notifyEnabledRef.current = true;
+      }
+    } else {
+      alert("Notifications are blocked. Please enable them in your browser settings.");
+    }
+  }
+
+  function sendNotification(jobCount: number) {
+    if (!notifyEnabledRef.current) return;
+    
+    try {
+      new Notification("Mouser Search Complete", {
+        body: `Found ${jobCount} verified job listing${jobCount !== 1 ? "s" : ""}!`,
+        icon: "/logo-cat.png",
+      });
+    } catch {
+      // Notification failed, ignore
+    }
+    
+    // Reset for next search
+    setNotifyEnabled(false);
+    notifyEnabledRef.current = false;
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -146,6 +208,9 @@ export default function Home() {
     setData(null);
     setLoading(true);
     setStatusLog([]);
+    setProgressCount(0);
+    setProgressStats({ looked_at: 0, dead_links: 0, excluded_other: 0 });
+    // Don't reset notifyEnabled here - user may have already clicked it
     const logStatus = (msg: string) => {
       setSearchStatus(msg);
       setStatusLog((prev) => [...prev, msg]);
@@ -177,7 +242,7 @@ export default function Home() {
         titles: titles.length > 0 ? titles : undefined,
         posted_within_days: postedWithinDays,
         resume_text: resumeText.trim() || undefined,
-        ...(isLimitless && dryRun ? { dry_run: true } : {}),
+        ...(isAdmin && dryRun ? { dry_run: true } : {}),
       };
       if (resumeFile) {
         logStatus("📎 Encoding resume file...");
@@ -185,6 +250,7 @@ export default function Home() {
         payload.resume_file_base64 = base64;
         payload.resume_file_mime = mime;
       }
+      payload.stream = true;
       logStatus("🐈‍⬛ Hunting for jobs...");
       const res = await fetch(`${apiBase}/api/search-jobs`, {
         method: "POST",
@@ -192,6 +258,61 @@ export default function Home() {
         body: JSON.stringify(payload),
         credentials: "same-origin",
       });
+      const contentType = res.headers.get("content-type") || "";
+      if (contentType.includes("text/event-stream") && res.body) {
+        logStatus("🧩 Listening for results...");
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let buffer = "";
+        const handleChunk = (chunk: string) => {
+          const lines = chunk.split("\n");
+          let eventName = "message";
+          let dataLine = "";
+          for (const line of lines) {
+            if (line.startsWith("event:")) eventName = line.replace("event:", "").trim();
+            if (line.startsWith("data:")) dataLine += line.replace("data:", "").trim();
+          }
+          if (!dataLine) return;
+          let data: Record<string, unknown> = {};
+          try {
+            data = JSON.parse(dataLine) as Record<string, unknown>;
+          } catch {
+            return;
+          }
+          if (eventName === "status" && typeof data.message === "string") {
+            logStatus(data.message);
+          } else if (eventName === "progress" && typeof data.found === "number") {
+            setProgressCount(data.found);
+            if (typeof data.looked_at === "number" || typeof data.dead_links === "number" || typeof data.excluded_other === "number") {
+              setProgressStats({
+                looked_at: typeof data.looked_at === "number" ? data.looked_at : 0,
+                dead_links: typeof data.dead_links === "number" ? data.dead_links : 0,
+                excluded_other: typeof data.excluded_other === "number" ? data.excluded_other : 0,
+              });
+            }
+          } else if (eventName === "done") {
+            const responseData = data as unknown as SearchResponse;
+            setData(responseData);
+            const jobCount = Array.isArray(responseData.results) ? responseData.results.length : 0;
+            setProgressCount(jobCount);
+            logStatus(`✅ Found ${jobCount} verified listings.`);
+            sendNotification(jobCount);
+          } else if (eventName === "error") {
+            const errMsg = typeof data.message === "string" ? data.message : "Server error.";
+            setError(errMsg);
+            logStatus(`⚠️ ${errMsg}`);
+          }
+        };
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() ?? "";
+          for (const part of parts) handleChunk(part);
+        }
+        return;
+      }
       logStatus("✅ Fresh jobs caught...");
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -206,8 +327,10 @@ export default function Home() {
       logStatus("🧩 Processing results...");
       const responseData = json as SearchResponse;
       setData(responseData);
-      const jobCount = Array.isArray(responseData.jobs) ? responseData.jobs.length : 0;
+      const jobCount = Array.isArray(responseData.results) ? responseData.results.length : 0;
       logStatus(`✅ Found ${jobCount} verified listings.`);
+      startProgressAnimation(jobCount);
+      sendNotification(jobCount);
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : "Network error.";
       setError(errMsg);
@@ -262,8 +385,14 @@ export default function Home() {
           </div>
         </header>
 
-        {isLimitless && (
+        {isAdmin && (
           <div className="flex items-center gap-4 mb-6">
+            <Link href="/admin" className="inline-flex items-center gap-1 text-yellow-400/80 text-xs hover:text-yellow-300">
+              <span className="text-yellow-400/60">›</span> Admin Panel
+            </Link>
+            <Link href="/debug" className="inline-flex items-center gap-1 text-white/60 text-xs hover:text-white/80">
+              <span className="text-white/40">›</span> Debug: Raw Results
+            </Link>
             <a href={typeof process.env.NEXT_PUBLIC_API_BASE === "string" ? `${process.env.NEXT_PUBLIC_API_BASE.replace(/\/$/, "")}/api/health` : "/api/health"} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-white/60 text-xs hover:text-white/80">
               <span className="text-white/40">›</span> Setup help
             </a>
@@ -399,33 +528,75 @@ export default function Home() {
               <p className="mt-1 text-white/50 text-xs">Used only for this search run. Not saved.</p>
             </div>
 
-            {isLimitless && (
+            {isAdmin && (
               <label className="flex items-center gap-2 cursor-pointer text-white/90 text-sm">
                 <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} disabled={loading} className="rounded border-white/30" />
                 Dry run (return generated queries only, no verification)
               </label>
             )}
 
-            <button type="submit" disabled={loading} className="w-full rounded-xl px-4 py-3 font-semibold text-white disabled:opacity-50 transition opacity-90 hover:opacity-100 mt-2" style={{ background: "linear-gradient(90deg, #DF338C 0%, #972D57 100%)" }}>
-              {loading ? searchStatus || "Searching…" : "Find jobs"}
-            </button>
-            
-            {loading && (
-              <div className="mt-6 text-center">
-                <div className="flex flex-col items-center gap-4">
-                  {/* Black bar behind the cat video */}
-                  <div className="w-full flex items-center justify-center py-2" style={{ backgroundColor: '#010001' }}>
-                    <video 
-                      src="/loading-cat.mp4" 
-                      autoPlay 
-                      loop 
-                      muted 
-                      playsInline
-                      className="h-24 w-auto"
+            {/* Stats and progress bar - visible during and after search */}
+            {(loading || progressStats.looked_at > 0 || progressCount > 0) && (
+              <div className="mt-4 space-y-3">
+                <div className="flex flex-wrap justify-center gap-4 text-xs">
+                  <span className="text-white/70">
+                    <span className="text-white/90 font-medium">{progressStats.looked_at}</span> jobs found
+                  </span>
+                  <span className="text-red-400/80">
+                    <span className="font-medium">{progressStats.dead_links}</span> dead links
+                  </span>
+                  <span className="text-yellow-400/80">
+                    <span className="font-medium">{progressStats.excluded_other}</span> unverified
+                  </span>
+                  <span className="text-green-400/80">
+                    <span className="font-medium">{progressCount}</span> verified
+                  </span>
+                </div>
+                <div className="w-full">
+                  <div className="h-2 rounded-full bg-white/10 overflow-hidden relative">
+                    {/* Animated background for activity indication */}
+                    {loading && progressCount === 0 && (
+                      <div 
+                        className="absolute inset-0 bg-gradient-to-r from-transparent via-[#DF338C]/30 to-transparent"
+                        style={{ animation: 'shimmer 1.5s infinite' }}
+                      />
+                    )}
+                    <div
+                      className="h-full rounded-full bg-[#DF338C] transition-all duration-300 relative z-10"
+                      style={{ width: `${Math.min(100, (progressCount / Math.max(1, topN)) * 100)}%` }}
                     />
                   </div>
-                  <span className="text-white/80 text-sm">We&apos;re searching the whole internet for the perfect job for you, this may take a while....</span>
+                  <div className="mt-1 text-xs text-white/50 text-center">
+                    {progressCount} of {topN} verified listings
+                  </div>
                 </div>
+              </div>
+            )}
+
+            <div className="flex gap-3 mt-4">
+              <button type="submit" disabled={loading} className="flex-1 rounded-xl px-4 py-3 font-semibold text-white disabled:opacity-50 transition opacity-90 hover:opacity-100" style={{ background: "linear-gradient(90deg, #DF338C 0%, #972D57 100%)" }}>
+                {loading ? searchStatus || "Searching…" : "Find jobs"}
+              </button>
+              
+              {loading && (
+                <button
+                  type="button"
+                  onClick={enableNotifications}
+                  disabled={notifyEnabled}
+                  className={`rounded-xl px-4 py-3 font-semibold transition ${
+                    notifyEnabled 
+                      ? "bg-green-600/80 text-white cursor-default" 
+                      : "bg-white/20 text-white hover:bg-white/30"
+                  }`}
+                >
+                  {notifyEnabled ? "🔔 On" : "🔔 Notify me"}
+                </button>
+              )}
+            </div>
+            
+            {loading && (
+              <div className="mt-4 text-center">
+                <span className="text-white/80 text-sm">We&apos;re searching the whole internet for the perfect job for you, this may take a while....</span>
               </div>
             )}
           </form>
@@ -436,7 +607,7 @@ export default function Home() {
             <p className="flex items-center gap-2">
               <span>⚠</span> {error}
             </p>
-            {isLimitless && (
+            {isAdmin && (
               <details className="mt-3 text-white/90">
                 <summary className="cursor-pointer font-medium">Response details (for debugging)</summary>
                 {errorDetails?.parse_error != null && (
@@ -448,7 +619,7 @@ export default function Home() {
                   </pre>
                 )}
                 {errorDetails != null && errorDetails.parse_error == null && errorDetails.raw_preview == null && (
-                  <p className="mt-1 text-xs text-white/70">No debug info in response. Sign out and sign in again with the limitless password so the API can attach parse_error/raw_preview.</p>
+                  <p className="mt-1 text-xs text-white/70">No debug info in response. Sign in as admin to see parse_error/raw_preview.</p>
                 )}
               </details>
             )}
@@ -472,7 +643,7 @@ export default function Home() {
                 return entries.map(([k, v]) => `${k}=${v}`).join(", ");
               })()}
             </p>
-            {isLimitless && data.raw_phase1_response != null && (
+            {isAdmin && data.raw_phase1_response != null && (
               <details className="mb-4 text-sm text-white/90">
                 <summary className="cursor-pointer font-medium select-none">Phase 1 raw response (before repair/parse)</summary>
                 <pre className="mt-2 p-3 rounded-lg bg-black/20 text-xs overflow-x-auto whitespace-pre-wrap break-words max-h-64 overflow-y-auto border border-white/10">
@@ -480,7 +651,7 @@ export default function Home() {
                 </pre>
               </details>
             )}
-            {isLimitless && results.length === 0 && !isDryRun && data.raw_phase1_response != null && (
+            {isAdmin && results.length === 0 && !isDryRun && data.raw_phase1_response != null && (
               <p className="text-white/60 text-xs mb-4">Phase 1 returned jobs but all were excluded after verification. Check Excluded counts above and Phase 1 raw response for details.</p>
             )}
             {results.length === 0 && !isDryRun ? (

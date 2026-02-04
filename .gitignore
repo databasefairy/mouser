@@ -34,3 +34,6 @@ Thumbs.db
 # TypeScript
 next-env.d.ts
 node_modules
+
+# User data (admin panel)
+data/

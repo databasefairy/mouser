@@ -26,9 +26,13 @@ function LoginForm() {
   async function handleCredentials(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    if (!username.trim()) {
+      setError("Username is required.");
+      return;
+    }
     setLoading(true);
     const res = await signIn("credentials", {
-      username: username || "user",
+      username: username.trim(),
       password,
       redirect: false,
     });
@@ -87,7 +91,7 @@ function LoginForm() {
         <form onSubmit={handleCredentials} className="space-y-4">
           <div>
             <label htmlFor="username" className="block text-sm font-medium text-white/90 mb-1">
-              Username (optional)
+              Username
             </label>
             <input
               id="username"
@@ -96,8 +100,9 @@ function LoginForm() {
               onChange={(e) => setUsername(e.target.value)}
               className="w-full rounded-xl border border-white/20 px-3 py-2.5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-[#DF338C]/50"
               style={{ background: "rgba(255,255,255,0.08)" }}
-              placeholder="any"
+              placeholder="username"
               autoComplete="username"
+              required
             />
           </div>
           <div>

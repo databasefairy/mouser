@@ -9,8 +9,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { z } from "zod";
 import axios from "axios";
-import { authOptions } from "@/lib/auth";
+import { authOptions, isLimitless as checkIsLimitless, isAdmin as checkIsAdmin } from "@/lib/auth";
 import { getGeminiApiKey } from "@/lib/env";
+import { incrementSearchCount, findUser } from "@/lib/users";
 import { fetchUrl, type JobLinkWithTitle } from "@/lib/search-jobs/fetch-url";
 import { runGeminiSearchOnly } from "@/lib/search-jobs/gemini-agent";
 import { classifyUrl } from "@/lib/search-jobs/classify-url";
@@ -424,9 +425,13 @@ function checkRateLimit(ip: string): boolean {
   return true;
 }
 
-/** Request 50 jobs per iteration to maximize chances of finding enough verified results */
-function requestCount(_needed: number): number {
-  return 50;
+/** 
+ * Request count per iteration.
+ * With URL Context, Gemini verifies pages before returning them.
+ * Google's limit is 20 URLs per request - cap at 15 to leave room for search URLs.
+ */
+function requestCount(needed: number): number {
+  return Math.min(15, Math.max(needed, 10));
 }
 
 /** Maximum iterations to prevent infinite loops */
@@ -481,58 +486,168 @@ function buildUserMessage(input: SearchJobsInput): string {
   return msg;
 }
 
-/** Prompt for phase 1: Google Search only. Asks for a JSON array of jobs with listing_url + direct_apply_link. */
+/**
+ * Detect seniority level from job titles.
+ */
+function detectTargetSeniority(titles: string[]): { level: string; description: string } {
+  const combined = titles.join(" ").toLowerCase();
+  
+  if (/\b(ceo|cto|cfo|coo|cmo|cio|chief|c-level)\b/.test(combined)) {
+    return { level: "executive", description: "C-level/Executive roles" };
+  }
+  if (/\b(vp|vice president)\b/.test(combined)) {
+    return { level: "vp", description: "VP-level roles" };
+  }
+  if (/\bdirector\b/.test(combined)) {
+    return { level: "director", description: "Director-level roles" };
+  }
+  if (/\b(senior|sr\.?|staff|principal|lead)\b/.test(combined)) {
+    return { level: "senior", description: "Senior/Staff/Lead roles" };
+  }
+  if (/\b(junior|jr\.?|entry|associate)\b/.test(combined)) {
+    return { level: "junior", description: "Entry-level/Junior roles" };
+  }
+  if (/\b(intern|internship)\b/.test(combined)) {
+    return { level: "intern", description: "Internship roles" };
+  }
+  return { level: "mid", description: "Mid-level roles" };
+}
+
+/** 
+ * Prompt for Phase 1: Google Search + URL Context.
+ * Uses Google Search to find job URLs, URL Context to verify pages are real job listings.
+ * Includes callback score logic to prioritize high-quality opportunities.
+ */
 function buildSearchOnlyPrompt(input: SearchJobsInput, options?: { excludeUrls?: Set<string>; iteration?: number; neededCount?: number }): string {
   const titlesStr = input.titles.length > 0 ? input.titles.join(" OR ") : "Product Manager";
   const locationStr = input.remote_only ? "remote" : (input.zip_code ? `near ${input.zip_code}` : "");
   const neededCount = options?.neededCount ?? input.top_n ?? 10;
   const requestNum = requestCount(neededCount);
+  const salaryNote = input.salary_min > 0 ? ` with salary >= $${input.salary_min.toLocaleString()}/year` : "";
+  const industryNote = input.industries.length > 0 ? ` in ${input.industries.join(" or ")}` : "";
   
-  // Build exclusion list for subsequent iterations
+  // Detect target seniority from search titles
+  const targetSeniority = detectTargetSeniority(input.titles);
+  
+  // Build exclusion list for subsequent iterations (limit to 10 to avoid URL limit issues)
   let exclusionNote = "";
   if (options?.excludeUrls && options.excludeUrls.size > 0) {
-    const excludeList = Array.from(options.excludeUrls).slice(0, 50); // Limit to 50 to avoid prompt bloat
-    exclusionNote = `\n\n### ALREADY FOUND (DO NOT RETURN THESE AGAIN)
-The following URLs have already been found. Return DIFFERENT job postings:
+    const excludeList = Array.from(options.excludeUrls).slice(0, 10);
+    exclusionNote = `\n\n### ALREADY FOUND (DO NOT RETURN)
 ${excludeList.map(u => `- ${u}`).join("\n")}`;
   }
 
-  return `Search for ${requestNum} ${locationStr} ${titlesStr} job postings that are currently open and actively accepting applications.
+  return `Find ${requestNum} ${locationStr} ${titlesStr}${industryNote} job postings${salaryNote} that are currently open.
 
-### REQUIREMENTS
-1. Return REAL job posting URLs from the actual company or job board (greenhouse.io, lever.co, ashbyhq.com, myworkdayjobs.com, smartrecruiters.com, icims.com, linkedin.com/jobs/view/*, indeed.com/viewjob*, etc.). Prefer known ATS domains, but if you cannot find enough, include other reputable company career sites. Use the job description page, not the application form (avoid /apply or /application URLs).
-2. NEVER return google.com URLs, redirect URLs, or search result page URLs
-3. Each URL must be a SPECIFIC job posting page, not a search results page or company careers homepage
-4. Include salary information if visible in the job posting
-5. Only return jobs that are CURRENTLY OPEN and accepting applications
-6. Balance results across ATS sources. Do NOT return mostly Greenhouse. Keep any single ATS under ~50% of results and include a mix of company career sites.${options?.iteration && options.iteration > 1 ? `
-7. This is search iteration ${options.iteration}. Find DIFFERENT jobs than previous iterations.` : ""}
+## YOUR GOAL
+Find jobs with the HIGHEST CALLBACK SCORE - positions where the applicant is most likely to get a response.
+The user is searching for: ${targetSeniority.description}
 
-### GOOD URL EXAMPLES
-- https://boards.greenhouse.io/company/jobs/123456
-- https://jobs.lever.co/company/abc-123
-- https://www.linkedin.com/jobs/view/1234567890
-- https://company.com/careers/job-title-123
+## CALLBACK SCORE CALCULATION (prioritize higher scores!)
+Calculate a score 0-100 for each job. Start at 50, then adjust:
 
-### BAD URL EXAMPLES (DO NOT USE)
-- https://google.com/... (any google URL)
-- https://linkedin.com/jobs/search/... (search page, not specific job)
-- https://indeed.com/jobs?q=... (search page)
-- https://company.com/careers (careers homepage, not specific job)
+**Company Size (major factor):**
+- Small company/startup (< 500 employees): +15 points (personal review likely)
+- Mid-size company (500-5000): +5 points
+- Large tech giants (Google, Meta, Amazon, Apple, Microsoft, Netflix, etc.): -15 points (thousands of applicants)
+- Large corporations (JP Morgan, Goldman, Boeing, Disney, etc.): -15 points
+
+**Application Platform (major factor):**
+- Direct ATS platforms: +15 points (application goes straight to recruiter)
+  ✓ greenhouse.io, lever.co, ashbyhq.com, workday, bamboohr, smartrecruiters, icims
+- Company careers page: +10 points
+- Job aggregators: -10 points (high competition)
+  ✗ indeed.com, linkedin.com/jobs, glassdoor, ziprecruiter, monster
+
+**Seniority Match (IMPORTANT - match to user's search):**
+The user is looking for: ${targetSeniority.description}
+- Job matches user's target seniority: +10 points (good fit)
+- Job is one level above/below: +0 points (acceptable)
+- Job is significantly mismatched: -10 points (poor fit)
+
+**Role Demand:**
+- High-demand roles (Engineer, Data Scientist, ML, DevOps, Security): +5 points
+
+**Freshness:**
+- Posted today/yesterday: +10 points (early applicant advantage)
+- Posted within 3 days: +5 points
+- Posted over 2 weeks ago: -5 points
+
+## PRIORITIZE JOBS THAT:
+1. MATCH the user's target seniority level (${targetSeniority.description})
+2. Are from smaller/mid-size companies (NOT tech giants)
+3. Use direct ATS platforms (greenhouse, lever, ashby, workday)
+4. Were posted recently
+5. Are high-demand roles
+
+## VERIFICATION (USE URL CONTEXT)
+Before including a job, verify via URL Context:
+- Page is a real job posting (not careers homepage)
+- Position is OPEN (no "closed", "filled", "no longer available")
+- Extract exact title, company, and salary from the page
+
+## URL REQUIREMENTS  
+✓ PREFER: Direct ATS platforms (higher callback scores)
+  - boards.greenhouse.io/company/jobs/123456
+  - jobs.lever.co/company/job-id  
+  - jobs.ashbyhq.com/company/uuid
+  - myworkdayjobs.com/company/job/title/id
+  - smartrecruiters.com/company/job-id
+
+✗ AVOID: Aggregators and large company postings (lower callback scores)
+  - linkedin.com/jobs (aggregator, -10 points)
+  - indeed.com (aggregator, -10 points)
+  - google.com, meta.com, amazon.jobs (giants, -15 points)
 ${exclusionNote}
-### OUTPUT FORMAT
-Return ONLY a valid JSON array:
+## OUTPUT FORMAT
+Return ONLY a JSON array, sorted by callback_score (highest first):
 [
   {
-    "job_title": "Software Engineer",
-    "company": "Acme Inc",
-    "listing_url": "https://boards.greenhouse.io/acme/jobs/123456",
-    "direct_apply_link": "https://boards.greenhouse.io/acme/jobs/123456"
+    "job_title": "Senior Product Manager",
+    "company": "TechStartup Inc",
+    "direct_apply_link": "https://jobs.lever.co/techstartup/abc123",
+    "salary": { "min": 150000, "max": 180000, "currency": "USD", "period": "yearly", "is_estimated": false },
+    "location": "Remote",
+    "callback_score": 85,
+    "score_rationale": ["Small company +15", "Direct ATS +15", "Senior role +5"]
   }
 ]
 
-Return at least ${requestNum} jobs. JSON only, no other text.`;
+CRITICAL RULES:
+- Return ${requestNum} jobs with HIGHEST callback scores
+- Prefer direct ATS platforms over aggregators
+- Prefer smaller companies over tech giants
+- Include callback_score (0-100) and score_rationale for each job
+- JSON only, no markdown, no other text${options?.iteration && options.iteration > 1 ? `
+- Iteration ${options.iteration}: Return DIFFERENT jobs` : ""}`;
 }
+
+type SearchResponsePayload = {
+  query_used: Record<string, unknown>;
+  results: JobResult[];
+  excluded_counts: ExcludedCounts;
+  missing_info: string[];
+  raw_phase1_response?: string;
+  verify_stats?: {
+    total: number;
+    passed: number;
+    failed: number;
+    pass_rate: number;
+    by_reason: Record<string, number>;
+    avg_duration_ms: number;
+    total_retries: number;
+  };
+};
+
+type ProgressStats = {
+  found: number;
+  target: number;
+  looked_at: number;
+  dead_links: number;
+  excluded_other: number;
+};
+
+type StreamEmit = (event: "status" | "progress" | "done" | "error", data: Record<string, unknown>) => void;
 
 export async function POST(request: NextRequest) {
   try {
@@ -550,6 +665,9 @@ export async function POST(request: NextRequest) {
     } catch {
       return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
     }
+
+    const wantsStream = body.stream === true;
+    if ("stream" in body) delete body.stream;
 
     // Optional resume file (base64): extract to text and append to resume_text
     const resumeFileBase64 = body.resume_file_base64 as string | undefined;
@@ -579,10 +697,29 @@ export async function POST(request: NextRequest) {
     }
     const input = parseResult.data;
 
-    // Debug features (dry_run, parse_error/raw_preview in errors) only for limitless profile
+    // Get session and check user role
     const session = await getServerSession(authOptions);
-    const isLimitless = (session?.user as { id?: string } | undefined)?.id === "rate_limit_exempt";
-    const effectiveDryRun = input.dry_run && isLimitless;
+    const username = session?.user?.name;
+    const sessionRole = (session?.user as { role?: string; id?: string })?.role || 
+                        (session?.user as { role?: string; id?: string })?.id;
+    
+    // Check user roles
+    const isAdmin = sessionRole === "admin";
+    const isLimitless = sessionRole === "power_user" || sessionRole === "admin" || sessionRole === "rate_limit_exempt";
+    
+    // Track search count and enforce daily limits for basic users
+    if (username) {
+      const searchResult = incrementSearchCount(username);
+      if (!searchResult.allowed) {
+        return NextResponse.json(
+          { error: `Daily search limit reached (${searchResult.limit}/day). Upgrade to Power User for unlimited searches.` },
+          { status: 429 }
+        );
+      }
+    }
+    
+    // Debug features (dry_run, raw_phase1_response) only for admins
+    const effectiveDryRun = input.dry_run && isAdmin;
 
     if (effectiveDryRun) {
       const queryUsed = { ...input, resume_text: undefined, resume_provided: !!input.resume_text?.trim(), dry_run: true };
@@ -605,6 +742,24 @@ export async function POST(request: NextRequest) {
         { status: 500 }
       );
     }
+
+    const runSearch = async (emit?: StreamEmit): Promise<SearchResponsePayload> => {
+      const emitStatus = (message: string) => emit?.("status", { message });
+      
+      // Running stats for progress updates
+      let runningLookedAt = 0;
+      let runningDeadLinks = 0;
+      let runningExcludedOther = 0;
+      
+      const emitProgress = (found: number) => emit?.("progress", { 
+        found, 
+        target: input.top_n,
+        looked_at: runningLookedAt,
+        dead_links: runningDeadLinks,
+        excluded_other: runningExcludedOther,
+      } as ProgressStats);
+
+      emitStatus("🔍 Starting search...");
 
     // Use first industry from input for salary estimation (or undefined if none specified)
     const primaryIndustry = input.industries.length > 0 ? input.industries[0] : undefined;
@@ -705,6 +860,7 @@ export async function POST(request: NextRequest) {
       if (neededCount <= 0) break;
       
       console.log(`[search-jobs] Iteration ${iteration}/${MAX_SEARCH_ITERATIONS}: need ${neededCount} more verified jobs (have ${verifiedJobs.length}/${input.top_n})`);
+      emitStatus(`🔍 Iteration ${iteration}/${MAX_SEARCH_ITERATIONS} — need ${neededCount} more`);
       
       // Build prompt with exclusions from previous iterations
       const searchPrompt = buildSearchOnlyPrompt(input, {
@@ -816,6 +972,8 @@ export async function POST(request: NextRequest) {
       
       console.log(`[search-jobs] Iteration ${iteration}: Gemini returned ${results.length} raw results`);
       totalRawResults += results.length;
+      runningLookedAt += results.length;
+      emitProgress(verifiedJobs.length); // Update with new looked_at count
       
       // Process each result
       const iterationJobs: JobResult[] = [];
@@ -848,6 +1006,7 @@ export async function POST(request: NextRequest) {
         // Skip if we've already seen this URL
         if (link && seenUrls.has(link)) {
           excluded.duplicate = (excluded.duplicate ?? 0) + 1;
+          runningExcludedOther++;
           continue;
         }
 
@@ -855,6 +1014,7 @@ export async function POST(request: NextRequest) {
         const allowOutsideWhitelist = iteration >= 3;
         if (link && !isHostWhitelisted(link) && !allowOutsideWhitelist) {
           excluded.not_whitelisted = (excluded.not_whitelisted ?? 0) + 1;
+          runningExcludedOther++;
           continue;
         }
 
@@ -863,6 +1023,7 @@ export async function POST(request: NextRequest) {
           const breezyPath = new URL(link).pathname;
           if (breezyPath !== "/" && breezyPath !== "") {
             excluded.not_whitelisted = (excluded.not_whitelisted ?? 0) + 1;
+            runningExcludedOther++;
             continue;
           }
         }
@@ -996,6 +1157,7 @@ export async function POST(request: NextRequest) {
               } else {
                 console.log(`[classify] No matching job found for "${jobTitle}" - marking as dead`);
                 excluded.not_active = (excluded.not_active ?? 0) + 1;
+                runningDeadLinks++;
                 continue;
               }
             } else if (isErrorPage && originalHadJobId) {
@@ -1032,6 +1194,7 @@ export async function POST(request: NextRequest) {
               if (!matched) {
                 console.log(`[classify] No fallback match found for "${jobTitle}" - marking as dead`);
                 excluded.not_active = (excluded.not_active ?? 0) + 1;
+                runningDeadLinks++;
                 continue;
               }
             }
@@ -1081,7 +1244,39 @@ export async function POST(request: NextRequest) {
             // Exclude search/index pages from results (do not return these)
             if (classification.page_type === "search_page" || classification.page_type === "company_jobs_index") {
               excluded.bad_classification = (excluded.bad_classification ?? 0) + 1;
+              runningExcludedOther++;
               continue;
+            }
+            // Extra guard: drop root careers/jobs pages (these are never specific job listings)
+            try {
+              const urlObj = new URL(link);
+              const path = urlObj.pathname.replace(/\/+$/, "").toLowerCase();
+              // Match root careers pages: /careers, /jobs, /join, /join-us, /work-with-us, etc.
+              // Also match localized versions: /en/careers, /us/jobs, etc.
+              const rootCareersPatterns = [
+                /^\/careers$/,
+                /^\/jobs$/,
+                /^\/join$/,
+                /^\/join-us$/,
+                /^\/joinus$/,
+                /^\/work-with-us$/,
+                /^\/openings$/,
+                /^\/opportunities$/,
+                /^\/vacancies$/,
+                /^\/[a-z]{2}\/careers$/, // /en/careers, /de/careers, etc.
+                /^\/[a-z]{2}\/jobs$/, // /en/jobs, /us/jobs, etc.
+                /^\/[a-z]{2}-[a-z]{2}\/careers$/, // /en-us/careers, etc.
+                /^\/[a-z]{2}-[a-z]{2}\/jobs$/, // /en-us/jobs, etc.
+              ];
+              const isRootCareersPage = rootCareersPatterns.some(pattern => pattern.test(path));
+              if (isRootCareersPage) {
+                console.log(`[filter] Excluded root careers page: ${link}`);
+                excluded.bad_classification = (excluded.bad_classification ?? 0) + 1;
+                runningExcludedOther++;
+                continue;
+              }
+            } catch {
+              // ignore URL parse errors
             }
             
             if (UPGRADE_PAGE_TYPES.has(originalPageType)) {
@@ -1106,6 +1301,7 @@ export async function POST(request: NextRequest) {
         const job = normalizeJob(raw);
         if (!job) {
           excluded.invalid_shape = (excluded.invalid_shape ?? 0) + 1;
+          runningExcludedOther++;
           continue;
         }
         
@@ -1116,6 +1312,7 @@ export async function POST(request: NextRequest) {
         const isHttpError = reasons.some(r => r.toLowerCase().includes('status 4') || r.toLowerCase().includes('status 5'));
         if (pageType === 'unknown' && isHttpError) {
           excluded.bad_classification = (excluded.bad_classification ?? 0) + 1;
+          runningExcludedOther++;
           continue;
         }
         
@@ -1184,6 +1381,7 @@ export async function POST(request: NextRequest) {
       // Verify the jobs from this iteration
       const { verified, stats: iterStats } = await getVerifiedJobs(iterationJobs, () => {
         excluded.not_active = (excluded.not_active ?? 0) + 1;
+        runningDeadLinks++;
       });
       
       console.log(`[search-jobs] Iteration ${iteration}: ${verified.length}/${iterationJobs.length} passed verification`);
@@ -1199,6 +1397,7 @@ export async function POST(request: NextRequest) {
       
       // Add verified jobs to our collection
       verifiedJobs.push(...verified);
+      emitProgress(verifiedJobs.length);
       
       // Check if we have enough
       if (verifiedJobs.length >= input.top_n) {
@@ -1238,12 +1437,12 @@ export async function POST(request: NextRequest) {
       .slice(0, input.top_n);
 
     const queryUsed = { ...input, resume_text: undefined, resume_provided: !!input.resume_text?.trim() };
-    return NextResponse.json({
+    return {
       query_used: queryUsed,
       results: topN,
       excluded_counts: excluded,
       missing_info: missingInfo,
-      ...(isLimitless && { 
+      ...(isAdmin && { 
         raw_phase1_response: rawPhase1Response,
         verify_stats: {
           total: totalVerifyStats.total,
@@ -1255,7 +1454,42 @@ export async function POST(request: NextRequest) {
           total_retries: totalVerifyStats.totalRetries,
         },
       }),
-    });
+    };
+    };
+
+    if (wantsStream) {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        start(controller) {
+          const send: StreamEmit = (event, data) => {
+            const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+            controller.enqueue(encoder.encode(payload));
+          };
+          (async () => {
+            try {
+              const payload = await runSearch(send);
+              send("done", payload);
+            } catch (err) {
+              const message = err instanceof Error ? err.message : "Search failed.";
+              send("error", { message });
+            } finally {
+              controller.close();
+            }
+          })();
+        },
+      });
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache, no-transform",
+          Connection: "keep-alive",
+          "X-Accel-Buffering": "no",
+        },
+      });
+    }
+
+    const payload = await runSearch();
+    return NextResponse.json(payload);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[search-jobs]", message);
