@@ -130,6 +130,17 @@ const URL_PATTERNS = {
   company_jobs_index: [
     /\/careers\/?$/i,
     /\/jobs\/?$/i,
+    /\/join\/?$/i,
+    /\/join-us\/?$/i,
+    /\/joinus\/?$/i,
+    /\/work-with-us\/?$/i,
+    /\/openings\/?$/i,
+    /\/opportunities\/?$/i,
+    /\/vacancies\/?$/i,
+    /\/[a-z]{2}\/careers\/?$/i, // Localized: /en/careers, /de/careers, etc.
+    /\/[a-z]{2}\/jobs\/?$/i, // Localized: /en/jobs, /us/jobs, etc.
+    /\/[a-z]{2}-[a-z]{2}\/careers\/?$/i, // Localized: /en-us/careers, etc.
+    /\/[a-z]{2}-[a-z]{2}\/jobs\/?$/i, // Localized: /en-us/jobs, etc.
     /greenhouse\.io\/[^/]+$/i, // Company's greenhouse main page (no job ID)
     /greenhouse\.io\/[^/]+\/?(?:\?|#)/i, // Greenhouse company page with query params (e.g. ?error=true)
     /greenhouse\.io\/[^/]+\?error=/i, // Greenhouse error redirect (job not found -> company page)

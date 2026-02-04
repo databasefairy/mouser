@@ -28,10 +28,21 @@ export type UsersData = {
 
 const DATA_FILE = path.join(process.cwd(), "data", "users.json");
 
+// In-memory cache for users (used when MOUSER_USERS env var is set)
+let usersCache: User[] | null = null;
+
 /**
- * Ensure the data directory and file exist.
+ * Check if we're using environment variable storage (for Vercel/serverless)
+ */
+function isEnvStorage(): boolean {
+  return !!process.env.MOUSER_USERS;
+}
+
+/**
+ * Ensure the data directory and file exist (local development only).
  */
 function ensureDataFile(): void {
+  if (isEnvStorage()) return;
   const dir = path.dirname(DATA_FILE);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
@@ -43,9 +54,25 @@ function ensureDataFile(): void {
 }
 
 /**
- * Read all users from the data file.
+ * Read all users from storage.
+ * - If MOUSER_USERS env var is set, uses that (for Vercel)
+ * - Otherwise reads from data/users.json (for local dev)
  */
 export function getUsers(): User[] {
+  // If using env storage, parse from MOUSER_USERS
+  if (isEnvStorage()) {
+    if (usersCache) return usersCache;
+    try {
+      const parsed = JSON.parse(process.env.MOUSER_USERS!) as UsersData;
+      usersCache = parsed.users || [];
+      return usersCache;
+    } catch {
+      console.error("[users] Failed to parse MOUSER_USERS env var");
+      return [];
+    }
+  }
+  
+  // Local file storage
   ensureDataFile();
   try {
     const data = fs.readFileSync(DATA_FILE, "utf-8");
@@ -57,9 +84,19 @@ export function getUsers(): User[] {
 }
 
 /**
- * Save users to the data file.
+ * Save users to storage.
+ * - If using env storage, updates the in-memory cache (changes won't persist across deploys)
+ * - Otherwise writes to data/users.json
  */
 function saveUsers(users: User[]): void {
+  if (isEnvStorage()) {
+    // Update in-memory cache (won't persist across function invocations on Vercel)
+    usersCache = users;
+    console.log("[users] Updated in-memory cache. To persist, update MOUSER_USERS env var:");
+    console.log(JSON.stringify({ users }, null, 2));
+    return;
+  }
+  
   ensureDataFile();
   const data: UsersData = { users };
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
@@ -77,22 +114,9 @@ export function findUser(username: string): User | undefined {
  * Authenticate a user by username and password.
  */
 export function authenticateUser(username: string, password: string): User | null {
-  console.log("[auth] Attempting login for:", username);
-  const users = getUsers();
-  console.log("[auth] Found users:", users.map(u => u.username));
   const user = findUser(username);
-  if (!user) {
-    console.log("[auth] User not found:", username);
-    return null;
-  }
-  console.log("[auth] User found, comparing passwords");
-  console.log("[auth] Stored password:", JSON.stringify(user.password));
-  console.log("[auth] Provided password:", JSON.stringify(password));
-  if (user.password !== password) {
-    console.log("[auth] Password mismatch");
-    return null;
-  }
-  console.log("[auth] Login successful for:", username);
+  if (!user) return null;
+  if (user.password !== password) return null;
   return user;
 }
 
@@ -220,9 +244,18 @@ export function isLimitless(username: string): boolean {
 }
 
 /**
- * Initialize default admin user if no users exist.
+ * Initialize default admin user if no users exist (local development only).
  */
 export function initializeDefaultAdmin(): void {
+  // Don't auto-create users when using env storage (Vercel)
+  if (isEnvStorage()) {
+    const users = getUsers();
+    if (users.length === 0) {
+      console.warn("[users] MOUSER_USERS env var is set but contains no users. Add users to the JSON.");
+    }
+    return;
+  }
+  
   const users = getUsers();
   if (users.length === 0) {
     // Create default admin from environment variable or use a default

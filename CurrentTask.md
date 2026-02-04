@@ -1,6 +1,6 @@
 # Current Task Status
 
-*Last updated: February 2, 2026 (Session 4)*
+*Last updated: February 2, 2026 (Session 5)*
 
 ## Status: ✅ All Tasks Complete
 
@@ -8,45 +8,30 @@ The codebase is in a working state. All tests pass (100/100), build succeeds.
 
 ---
 
-## What Was Done This Session (Session 4)
+## What Was Done This Session (Session 5)
 
-### 1. Iterative Search Loop
-- **Problem solved:** Search was returning many dead listings because it only searched once
-- **Solution:** Search now loops until it finds `top_n` verified live listings (or hits max 5 iterations)
-- **Requests 50 jobs per iteration** to maximize verification success rate
-- Each iteration excludes already-found URLs to avoid duplicates
-- Prompt tells Gemini to find DIFFERENT jobs than previous iterations
-- Progress logged: "need X more verified jobs (have Y/Z)"
+### 1. Streaming progress updates
+- SSE endpoint: client sends `stream: true`, server emits `status`, `progress`, `done`
+- Progress bar fills as verified jobs are found
+- Status messages live only in the search button
 
-### 2. Page Type Annotations
-- Each result now shows its page type with an emoji label:
-  - 📋 Job Listing
-  - ✅ Direct Apply
-  - 🔍 Search Page
-  - 🏢 Company Jobs
-  - 📰 Aggregator
-  - ❓ Unknown
-- Labels displayed in green below the Apply link
-- Warning notes (⚠️) and info notes (ℹ️) still shown
+### 2. Loading UI refresh
+- Cat loading video with black bar background `#010001`
+- Long-wait messages rotate every 30s
 
-### 3. Cross-Iteration Deduplication
-- Tracks all seen URLs in a Set across all iterations
-- Skips jobs with already-seen URLs
-- Passes exclude list to Gemini prompt to help find new jobs
+### 3. Link filtering & quality
+- Exclude search/index pages from results
+- Prefer job description pages over apply-flow URLs
+- Soft whitelist: ATS-only for iterations 1–2, broader after iteration 3
+- Breezy restricted to base `https://jobs.breezy.hr/`
+- Added `wearemotive.com/joinus` as index pattern
 
-### 4. Enhanced Greenhouse Handling
-- **Problem:** Gemini returns stale Greenhouse job IDs that redirect to `?error=true` pages
-- **Solution:** 
-  - Detect Greenhouse error pages and company listing pages
-  - Extract actual job links from these pages
-  - Upgrade to valid job URLs automatically
-- Added relative URL handling (`/company/jobs/ID` → full URL)
-- Added redirect detection (follows redirects to actual job pages)
+### 4. Ashby & Workday fixes
+- Ashby: treat generic “Jobs” pages as dead, avoid JS bundle false positives
+- Workday: detect “Job Search/Careers” fallback titles + extra dead phrases
 
-### 5. Updated UI
-- Page type labels displayed with color coding
-- Status messages updated with "🔄 Finding more verified listings..."
-- Expected time updated to "30-60 seconds" for multiple iterations
+### 5. Auth simplification
+- Removed GitHub OAuth; credentials-only login
 
 ---
 
@@ -54,11 +39,13 @@ The codebase is in a working state. All tests pass (100/100), build succeeds.
 
 | File | Change |
 |------|--------|
-| `src/app/api/search-jobs/route.ts` | Iterative search loop (50/iteration), page type labels, Greenhouse handling |
-| `src/app/page.tsx` | Display page type labels, updated status messages |
-| `src/lib/search-jobs/fetch-url.ts` | Improved Greenhouse job link extraction |
-| `src/lib/search-jobs/classify-url.ts` | Greenhouse error page pattern detection |
-| `HANDOVER_SUMMARY.md` | Updated with session 4 work |
+| `src/app/api/search-jobs/route.ts` | SSE streaming, filtering, apply-flow preference, Ashby/Workday fixes |
+| `src/app/page.tsx` | Streaming client + progress bar |
+| `src/lib/search-jobs/classify-url.ts` | Breezy + Motive index patterns |
+| `src/lib/auth.ts` | Credentials-only auth |
+| `src/app/login/page.tsx` | Remove GitHub login UI |
+| `public/loading-cat.mp4` | Loading animation |
+| `HANDOVER_SUMMARY.md` | Updated with session 5 work |
 | `CurrentTask.md` | This file |
 
 ---
@@ -72,14 +59,13 @@ Test Files  5 passed (5)
 
 ---
 
-## Key Behavior Changes (Session 4)
+## Key Behavior Changes (Session 5)
 
-1. **Iterative search** - keeps searching until top_n verified jobs found
-2. **50 jobs per iteration** - maximizes chances of finding enough verified results
-3. **Max 5 iterations** - prevents infinite loops
-4. **Page type labels** - each result shows what type of page it links to
-5. **Cross-iteration dedupe** - no duplicate jobs across iterations
-6. **Greenhouse error handling** - extracts real jobs from error/listing pages
+1. **Streaming progress** - real-time status + progress bar via SSE
+2. **Search/index pages excluded** - no base careers/search pages
+3. **Apply-flow avoidance** - prefer job description pages
+4. **Soft whitelist** - ATS-only early, broader later
+5. **Credentials-only auth**
 
 ---
 

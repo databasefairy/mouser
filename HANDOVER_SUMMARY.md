@@ -1,6 +1,6 @@
 # HANDOVER SUMMARY
 
-*Last updated: February 2, 2026 (Session 4)*
+*Last updated: February 2, 2026 (Session 5)*
 
 ---
 
@@ -18,7 +18,7 @@
 | Frontend | Next.js 15.5.x, React 19, Tailwind CSS |
 | Backend | Next.js API Routes (App Router) |
 | AI | Google Gemini 3 Flash Preview via `@google/genai` with Google Search grounding |
-| Auth | NextAuth.js 4.x (credentials + optional GitHub OAuth) |
+| Auth | NextAuth.js 4.x (credentials-only) |
 | HTTP | axios (link verification), native fetch (SSRF-protected) |
 | Validation | Zod |
 | Testing | Vitest (100 tests) |
@@ -115,7 +115,7 @@ User → /login (NextAuth) → Home Page (page.tsx)
 ### What Works ✅
 - `npm run build` passes
 - `npm test` passes (100 tests)
-- Auth flow (credentials and GitHub OAuth)
+- Auth flow (credentials-only)
 - Gemini 3 Flash Preview with Google Search grounding
 - **Gemini API retry logic** (3 retries on 503/overloaded)
 - JSON parsing with multiple repair strategies
@@ -125,7 +125,8 @@ User → /login (NextAuth) → Home Page (page.tsx)
 - Salary estimation for jobs without salary data
 - Callback score estimation based on job characteristics
 - Link verification with retry logic and **70+ dead keywords**
-- **Live search status indicator** with rotating messages
+- **Live search status indicator** (button-only) + long-wait messages
+- **SSE progress updates** for found-job progress bar
 - Results table renders with valid external links and warning labels
 
 ### Known Issues (Non-Blocking)
@@ -140,7 +141,49 @@ User → /login (NextAuth) → Home Page (page.tsx)
 
 ---
 
-## 4) What Was Done This Session (Session 4)
+## 4) What Was Done This Session (Session 5)
+
+### New Features Added / Changes
+
+1. **Streaming progress updates (SSE)** (`route.ts`, `page.tsx`)
+   - Client sends `stream: true` and consumes server-sent events
+   - Server emits `status`, `progress`, and `done`
+   - Progress bar fills as verified jobs are found
+
+2. **Loading UI updates** (`page.tsx`)
+   - Status only on the search button (no status log on page)
+   - Cat loading video (`public/loading-cat.mp4`) with black bar background `#010001`
+   - Long-wait messages rotate every 30s
+
+3. **Link quality & filtering upgrades** (`route.ts`, `classify-url.ts`)
+   - Prefer job description pages over apply-flow URLs
+   - Exclude `search_page` and `company_jobs_index` from results (hard filter)
+   - Extra guard to drop base `/careers` or `/jobs` pages even if misclassified
+   - Soft whitelist: enforce ATS whitelist for iterations 1–2, allow broader domains starting iteration 3
+   - Breezy restriction: only allow `https://jobs.breezy.hr/` (block company subpaths)
+   - Added `wearemotive.com/joinus` as jobs index
+
+4. **Ashby & Workday dead-link fixes** (`route.ts`)
+   - Ashby: treat generic “Jobs” pages as dead, avoid false positives from JS bundles
+   - Workday: additional closed phrases + detect search fallback titles
+
+5. **Auth simplification** (`auth.ts`, `login/page.tsx`, `.env.example`)
+   - Removed GitHub OAuth, credentials-only sign-in
+
+### Files Modified
+| File | Change |
+|------|--------|
+| `src/app/api/search-jobs/route.ts` | SSE progress, apply-flow preference, index filtering, whitelist softening, Ashby/Workday fixes |
+| `src/app/page.tsx` | Loading UI, progress bar, streaming client |
+| `src/lib/search-jobs/classify-url.ts` | Breezy + Motive index patterns |
+| `src/lib/auth.ts` | Removed GitHub provider |
+| `src/app/login/page.tsx` | Removed GitHub login UI |
+| `.env.example` | Credentials-only auth |
+| `public/loading-cat.mp4` | Loading animation video |
+
+---
+
+## 4b) What Was Done in Session 4
 
 ### New Features Added
 
@@ -188,7 +231,7 @@ User → /login (NextAuth) → Home Page (page.tsx)
 
 ---
 
-## 4b) What Was Done in Session 3
+## 4c) What Was Done in Session 3
 
 ### New Features Added
 
@@ -264,7 +307,6 @@ User → /login (NextAuth) → Home Page (page.tsx)
 - [ ] **Machine learning callback model** - Train on actual response data
 - [ ] **Caching layer** - Cache verified URLs to speed up repeated searches
 - [ ] **Rate limit persistence** - Use Redis/DB instead of in-memory for production
-- [ ] **Server-sent events** - Real-time status updates from server during search
 
 ---
 
@@ -282,14 +324,14 @@ User → /login (NextAuth) → Home Page (page.tsx)
 ### 4. No Single-Line Comment Stripping in JSON Repair
 **Why:** The `//` pattern matches URLs like `https://...` and corrupts them.
 
-### 5. No Whitelist Filtering
-**Why:** User requested removal. Jobs from any domain are allowed. AI finds listings; server only verifies they're live.
+### 5. Soft Whitelist (Session 5)
+**Why:** Prefer known ATS domains for quality, but allow broader domains starting iteration 3 if results are thin.
 
 ### 6. `isInvalidLink()` Treats <20 chars as Invalid
 **Why:** Valid job URLs are always 20+ characters. Anything shorter is truncated garbage.
 
-### 7. Warning Notes Instead of Filtering (Session 3)
-**Why:** User requested that search/index pages be included but labeled, not filtered out. High callback score jobs from search pages should still be shown.
+### 7. Filter Search/Index Pages (Session 5)
+**Why:** User requested base careers/search pages should not come through; these are now excluded.
 
 ### 8. Job Titles as OR (Not AND)
 **Why:** User confirmed this is correct. Multiple titles search for jobs matching ANY of the titles.
@@ -319,11 +361,9 @@ GOOGLE_API_KEY=your-google-api-key
 NEXTAUTH_SECRET=random-string-at-least-32-chars
 NEXTAUTH_URL=http://localhost:3000  # no trailing slash
 
-# Auth providers (at least one required)
+# Auth (credentials-only)
 MOUSER_LOGIN_PASSWORD=any-password-for-credentials-login
 MOUSER_RATE_LIMIT_EXEMPT_PASSWORD=password-for-limitless-profile
-GITHUB_ID=optional-github-oauth-client-id
-GITHUB_SECRET=optional-github-oauth-client-secret
 ```
 
 ---

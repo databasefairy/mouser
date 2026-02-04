@@ -18,13 +18,16 @@ Your Instructions:
 
 5. Focus your immediate attention on any item I specify, or ask me what to work on next.
 
-Important Context from Session 4:
-- **Iterative search loop**: Requests 50 jobs per iteration, continues until top_n verified jobs found (max 5 iterations)
-- **Greenhouse handling**: Detects error pages (`?error=true`), extracts real job links, handles redirects
-- **Page type annotations**: Each result shows 📋/✅/🔍/🏢/📰/❓ emoji labels
-- **Cross-iteration deduplication**: Tracks seen URLs across iterations to avoid duplicates
+Important Context from Session 5:
+- **Streaming progress (SSE)**: client sends `stream: true`, server emits `status`, `progress`, `done`
+- **Progress bar** fills as verified jobs are found; status shown only on search button
+- **Soft whitelist**: ATS-only for iterations 1–2, allow broader domains from iteration 3
+- **Search/index pages are now excluded** (no base careers/search pages)
+- **Prefer job description pages** (avoid apply-flow URLs when possible)
+- **Ashby/Workday fixes**: treat generic Jobs pages as dead; Workday fallback titles detected
+- **Breezy restriction**: only allow `https://jobs.breezy.hr/`
+- **Credentials-only auth** (GitHub login removed)
 - Job titles are treated as OR (not AND) - this is correct
-- Warning labels (⚠️/ℹ️) shown for search/index pages, NOT filtered out
 
 Key Technical Details:
 - Gemini 3 Flash Preview with Google Search grounding
@@ -49,10 +52,10 @@ npm test        # Run tests (100 tests)
 ### Key Files
 | File | Purpose |
 |------|---------|
-| `src/app/api/search-jobs/route.ts` | Main API with iterative search loop |
-| `src/lib/search-jobs/fetch-url.ts` | URL fetcher with Greenhouse link extraction |
+| `src/app/api/search-jobs/route.ts` | Main API, iterative search + SSE |
+| `src/lib/search-jobs/fetch-url.ts` | URL fetcher with ATS link extraction |
 | `src/lib/search-jobs/classify-url.ts` | Page type classification with URL patterns |
-| `src/app/page.tsx` | Frontend with search form and results table |
+| `src/app/page.tsx` | Frontend, SSE client + progress bar |
 
 ### Environment Variables (required in `.env`)
 ```

@@ -7,8 +7,8 @@ import { GoogleGenAI } from "@google/genai";
 import { fetchUrl } from "@/lib/search-jobs/fetch-url";
 import { classifyUrl } from "@/lib/search-jobs/classify-url";
 
-// Gemini 3 Flash Preview - fast frontier intelligence with Google Search grounding support
-const GEMINI_MODEL = "gemini-3-flash-preview";
+// Gemini 2.5 Flash - stable model with Google Search grounding and URL Context support
+const GEMINI_MODEL = "gemini-2.5-flash";
 const MAX_ITERATIONS = 15;
 
 const fetchUrlDeclaration = {
@@ -120,13 +120,14 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Phase 1: Google Search only (no function calling). Use to get live job links; then verify with fetch_url/classify_url in the route.
+ * Phase 1: Google Search + URL Context.
+ * Uses Google Search to find job URLs, URL Context to verify and read page content.
  * Includes retry logic for 503 (overloaded) errors.
  */
 export async function runGeminiSearchOnly(
   apiKey: string,
   prompt: string
-): Promise<{ outputText: string }> {
+): Promise<{ outputText: string; urlContextMetadata?: unknown }> {
   const ai = new GoogleGenAI({ apiKey });
   
   const MAX_RETRIES = 3;
@@ -138,13 +139,25 @@ export async function runGeminiSearchOnly(
         model: GEMINI_MODEL,
         contents: [{ role: "user", parts: [{ text: prompt }] }],
         config: {
-          tools: [{ googleSearch: {} as Record<string, never> }],
+          tools: [
+            { googleSearch: {} as Record<string, never> },
+            { urlContext: {} as Record<string, never> },
+          ],
           temperature: 0.3,
           maxOutputTokens: 16384,
         },
       });
       const text = (response as { text?: string }).text ?? "";
-      return { outputText: text };
+      
+      // Extract URL context metadata if available
+      const urlContextMetadata = (response as { candidates?: Array<{ urlContextMetadata?: unknown }> })
+        .candidates?.[0]?.urlContextMetadata;
+      
+      if (urlContextMetadata) {
+        console.log("[gemini] URL context used:", JSON.stringify(urlContextMetadata));
+      }
+      
+      return { outputText: text, urlContextMetadata };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       const isOverloaded = errorMessage.includes("503") || 
