@@ -123,15 +123,32 @@ async function findUserInSupabase(username: string): Promise<User | null> {
  */
 async function verifyUserInSupabase(username: string, password: string): Promise<User | null> {
   const supabase = getSupabase();
-  if (!supabase) return null;
+  if (!supabase) {
+    console.error("[users] Supabase client not available for verify");
+    return null;
+  }
+  
+  console.log("[users] Verifying user:", username);
   
   const { data, error } = await supabase
-    .rpc("verify_user", { p_username: username, p_password: password })
-    .single();
+    .rpc("verify_user", { p_username: username, p_password: password });
   
-  if (error || !data) return null;
+  console.log("[users] verify_user result:", { data, error: error?.message });
   
-  const row = data as { username: string; password_hash: string; role: string; search_count: number; last_search_date: string; created_at: string };
+  if (error) {
+    console.error("[users] verify_user error:", error.message);
+    return null;
+  }
+  
+  // RPC returns an array, get the first result
+  const rows = Array.isArray(data) ? data : [data];
+  if (!rows || rows.length === 0 || !rows[0]) {
+    console.log("[users] No user found or wrong password for:", username);
+    return null;
+  }
+  
+  const row = rows[0] as { username: string; password_hash: string; role: string; search_count: number; last_search_date: string; created_at: string };
+  console.log("[users] User verified:", row.username, "role:", row.role);
   
   return {
     username: row.username,
