@@ -106,6 +106,32 @@ async function findUserInSupabase(username: string): Promise<User | null> {
   };
 }
 
+/**
+ * Verify user credentials using Supabase's pgcrypto verify_user function.
+ * This compares the password using bcrypt hashing.
+ */
+async function verifyUserInSupabase(username: string, password: string): Promise<User | null> {
+  const supabase = getSupabase();
+  if (!supabase) return null;
+  
+  const { data, error } = await supabase
+    .rpc("verify_user", { p_username: username, p_password: password })
+    .single();
+  
+  if (error || !data) return null;
+  
+  const row = data as { username: string; password: string; role: string; search_count: number; last_search_date: string; created_at: string };
+  
+  return {
+    username: row.username,
+    password: row.password, // This is the hashed password
+    role: row.role as UserRole,
+    searchCount: row.search_count || 0,
+    lastSearchDate: row.last_search_date || "",
+    createdAt: row.created_at,
+  };
+}
+
 async function createUserInSupabase(username: string, password: string, role: UserRole): Promise<User | null> {
   const supabase = getSupabase();
   if (!supabase) return null;
@@ -264,8 +290,15 @@ export function findUser(username: string): User | undefined {
 
 /**
  * Authenticate a user by username and password.
+ * Uses pgcrypto verify_user function for Supabase (bcrypt comparison).
  */
 export async function authenticateUserAsync(username: string, password: string): Promise<User | null> {
+  if (getStorageMode() === "supabase") {
+    // Use Supabase's verify_user function for bcrypt password comparison
+    return verifyUserInSupabase(username, password);
+  }
+  
+  // For local/env storage, compare plain text (not recommended for production)
   const user = await findUserAsync(username);
   if (!user) return null;
   if (user.password !== password) return null;
