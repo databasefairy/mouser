@@ -82,6 +82,7 @@ export default function Home() {
   const [resumeText, setResumeText] = useState("");
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [dryRun, setDryRun] = useState(false);
+  const [fastMode, setFastMode] = useState(false);
   const [loading, setLoading] = useState(false);
   const [searchStatus, setSearchStatus] = useState<string>("");
   const [statusLog, setStatusLog] = useState<string[]>([]);
@@ -169,7 +170,7 @@ export default function Home() {
       alert("This browser does not support notifications");
       return;
     }
-    
+
     if (Notification.permission === "granted") {
       setNotifyEnabled(true);
       notifyEnabledRef.current = true;
@@ -186,7 +187,7 @@ export default function Home() {
 
   function sendNotification(jobCount: number) {
     if (!notifyEnabledRef.current) return;
-    
+
     try {
       new Notification("Mouser Search Complete", {
         body: `Found ${jobCount} verified job listing${jobCount !== 1 ? "s" : ""}!`,
@@ -195,7 +196,7 @@ export default function Home() {
     } catch {
       // Notification failed, ignore
     }
-    
+
     // Reset for next search
     setNotifyEnabled(false);
     notifyEnabledRef.current = false;
@@ -230,7 +231,7 @@ export default function Home() {
       longWaitIndex += 1;
       logStatus(msg);
     }, 30_000);
-    
+
     const apiBase = typeof process.env.NEXT_PUBLIC_API_BASE === "string" ? process.env.NEXT_PUBLIC_API_BASE.replace(/\/$/, "") : "";
     try {
       const payload: Record<string, unknown> = {
@@ -243,6 +244,7 @@ export default function Home() {
         posted_within_days: postedWithinDays,
         resume_text: resumeText.trim() || undefined,
         ...(isAdmin && dryRun ? { dry_run: true } : {}),
+        fast_mode: fastMode,
       };
       if (resumeFile) {
         logStatus("📎 Encoding resume file...");
@@ -528,6 +530,14 @@ export default function Home() {
               <p className="mt-1 text-white/50 text-xs">Used only for this search run. Not saved.</p>
             </div>
 
+            <label className="flex items-center gap-2 cursor-pointer text-white/90 text-sm">
+              <input type="checkbox" checked={fastMode} onChange={(e) => setFastMode(e.target.checked)} disabled={loading} className="rounded border-white/30" />
+              <span className="flex items-center gap-2">
+                Fast Mode (AI suggestions, ~5 sec)
+                <span className="text-white/50 text-xs" title="Generates plausible job suggestions without verification. URLs may be outdated or incorrect.">ℹ️</span>
+              </span>
+            </label>
+
             {isAdmin && (
               <label className="flex items-center gap-2 cursor-pointer text-white/90 text-sm">
                 <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} disabled={loading} className="rounded border-white/30" />
@@ -556,7 +566,7 @@ export default function Home() {
                   <div className="h-2 rounded-full bg-white/10 overflow-hidden relative">
                     {/* Animated background for activity indication */}
                     {loading && progressCount === 0 && (
-                      <div 
+                      <div
                         className="absolute inset-0 bg-gradient-to-r from-transparent via-[#DF338C]/30 to-transparent"
                         style={{ animation: 'shimmer 1.5s infinite' }}
                       />
@@ -577,23 +587,22 @@ export default function Home() {
               <button type="submit" disabled={loading} className="flex-1 rounded-xl px-4 py-3 font-semibold text-white disabled:opacity-50 transition opacity-90 hover:opacity-100" style={{ background: "linear-gradient(90deg, #DF338C 0%, #972D57 100%)" }}>
                 {loading ? searchStatus || "Searching…" : "Find jobs"}
               </button>
-              
+
               {loading && (
                 <button
                   type="button"
                   onClick={enableNotifications}
                   disabled={notifyEnabled}
-                  className={`rounded-xl px-4 py-3 font-semibold transition ${
-                    notifyEnabled 
-                      ? "bg-green-600/80 text-white cursor-default" 
+                  className={`rounded-xl px-4 py-3 font-semibold transition ${notifyEnabled
+                      ? "bg-green-600/80 text-white cursor-default"
                       : "bg-white/20 text-white hover:bg-white/30"
-                  }`}
+                    }`}
                 >
                   {notifyEnabled ? "🔔 On" : "🔔 Notify me"}
                 </button>
               )}
             </div>
-            
+
             {loading && (
               <div className="mt-4 text-center">
                 <span className="text-white/80 text-sm">We&apos;re searching the whole internet for the perfect job for you, this may take a while....</span>
@@ -631,69 +640,69 @@ export default function Home() {
           const isDryRun = data.query_used?.dry_run === true;
           const hasExcluded = Object.entries(data.excluded_counts || {}).some(([, v]) => typeof v === "number" && v > 0);
           return (
-          <div className={`rounded-xl p-6 sm:p-8 shadow-2xl ${cardBg}`} style={{ boxShadow: "0 0 0 1px rgba(223,51,140,0.15), 0 25px 50px -12px rgba(38,0,59,0.5)" }}>
-            <h2 className="text-lg font-semibold text-white mb-4">Results ({results.length})</h2>
-            {Array.isArray(data.missing_info) && data.missing_info.length > 0 && (
-              <p className="text-white/70 text-sm mb-4">{data.missing_info.join(" ")}</p>
-            )}
-            <p className="text-white/60 text-xs mb-4">
-              Excluded: {(() => {
-                const entries = Object.entries(data.excluded_counts || {}).filter(([, v]) => typeof v === "number" && v > 0);
-                if (entries.length === 0) return "none";
-                return entries.map(([k, v]) => `${k}=${v}`).join(", ");
-              })()}
-            </p>
-            {isAdmin && data.raw_phase1_response != null && (
-              <details className="mb-4 text-sm text-white/90">
-                <summary className="cursor-pointer font-medium select-none">Phase 1 raw response (before repair/parse)</summary>
-                <pre className="mt-2 p-3 rounded-lg bg-black/20 text-xs overflow-x-auto whitespace-pre-wrap break-words max-h-64 overflow-y-auto border border-white/10">
-                  {data.raw_phase1_response}
-                </pre>
-              </details>
-            )}
-            {isAdmin && results.length === 0 && !isDryRun && data.raw_phase1_response != null && (
-              <p className="text-white/60 text-xs mb-4">Phase 1 returned jobs but all were excluded after verification. Check Excluded counts above and Phase 1 raw response for details.</p>
-            )}
-            {results.length === 0 && !isDryRun ? (
-              <div className="text-white/70 space-y-2">
-                <p>No jobs matched after verification and filters.</p>
-                {hasExcluded ? (
-                  <p className="text-white/60 text-xs">
-                    Jobs were excluded by: not_direct_apply (incomplete or invalid apply URL, e.g. only "https:"), not_active (apply link 404/410), not_whitelisted (domain not allowed), bad_classification, duplicate, or invalid shape. Try again; if not_direct_apply is high, the model may be truncating URLs—we are working on improving this.
-                  </p>
-                ) : (
-                  <p className="text-white/60 text-xs">Model returned no jobs. Try again or broaden search criteria (industries, titles).</p>
-                )}
-              </div>
-            ) : isDryRun ? (
-              <div className="space-y-4 text-sm text-white/90">
-                <p className="font-medium">Dry run: generated prompts (no verification run).</p>
-                <pre className="rounded-lg bg-white/5 p-4 whitespace-pre-wrap break-words text-xs overflow-x-auto">
-                  {typeof (data as unknown as { generated_instructions?: string }).generated_instructions === "string"
-                    ? (data as unknown as { generated_instructions: string }).generated_instructions?.slice(0, 3000) + "\n..."
-                    : ""}
-                </pre>
-              </div>
-            ) : (
-              <div className="overflow-x-auto -mx-2">
-                <table className="w-full text-sm text-left text-white">
-                  <thead>
-                    <tr className="border-b border-white/20">
-                      <th className="px-4 py-3 font-semibold text-white/90">Job Title</th>
-                      <th className="px-4 py-3 font-semibold text-white/90">Company</th>
-                      <th className="px-4 py-3 font-semibold text-white/90">Estimated Salary</th>
-                      <th className="px-4 py-3 font-semibold text-white/90">Call Back Score</th>
-                      <th className="px-4 py-3 font-semibold text-white/90">Application link</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {results.map((job, i) => (
-                      <tr key={i} className="border-b border-white/10 hover:bg-white/5">
-                        <td className="px-4 py-3 align-top font-medium">{job.job_title}</td>
-                        <td className="px-4 py-3 align-top"><span className="text-[#c4b5fd]">{job.company}</span></td>
-                        <td className="px-4 py-3 align-top">
-                          {job.salary && (job.salary.min != null || job.salary.max != null)
-                            ? (() => {
+            <div className={`rounded-xl p-6 sm:p-8 shadow-2xl ${cardBg}`} style={{ boxShadow: "0 0 0 1px rgba(223,51,140,0.15), 0 25px 50px -12px rgba(38,0,59,0.5)" }}>
+              <h2 className="text-lg font-semibold text-white mb-4">Results ({results.length})</h2>
+              {Array.isArray(data.missing_info) && data.missing_info.length > 0 && (
+                <p className="text-white/70 text-sm mb-4">{data.missing_info.join(" ")}</p>
+              )}
+              <p className="text-white/60 text-xs mb-4">
+                Excluded: {(() => {
+                  const entries = Object.entries(data.excluded_counts || {}).filter(([, v]) => typeof v === "number" && v > 0);
+                  if (entries.length === 0) return "none";
+                  return entries.map(([k, v]) => `${k}=${v}`).join(", ");
+                })()}
+              </p>
+              {isAdmin && data.raw_phase1_response != null && (
+                <details className="mb-4 text-sm text-white/90">
+                  <summary className="cursor-pointer font-medium select-none">Phase 1 raw response (before repair/parse)</summary>
+                  <pre className="mt-2 p-3 rounded-lg bg-black/20 text-xs overflow-x-auto whitespace-pre-wrap break-words max-h-64 overflow-y-auto border border-white/10">
+                    {data.raw_phase1_response}
+                  </pre>
+                </details>
+              )}
+              {isAdmin && results.length === 0 && !isDryRun && data.raw_phase1_response != null && (
+                <p className="text-white/60 text-xs mb-4">Phase 1 returned jobs but all were excluded after verification. Check Excluded counts above and Phase 1 raw response for details.</p>
+              )}
+              {results.length === 0 && !isDryRun ? (
+                <div className="text-white/70 space-y-2">
+                  <p>No jobs matched after verification and filters.</p>
+                  {hasExcluded ? (
+                    <p className="text-white/60 text-xs">
+                      Jobs were excluded by: not_direct_apply (incomplete or invalid apply URL, e.g. only "https:"), not_active (apply link 404/410), not_whitelisted (domain not allowed), bad_classification, duplicate, or invalid shape. Try again; if not_direct_apply is high, the model may be truncating URLs—we are working on improving this.
+                    </p>
+                  ) : (
+                    <p className="text-white/60 text-xs">Model returned no jobs. Try again or broaden search criteria (industries, titles).</p>
+                  )}
+                </div>
+              ) : isDryRun ? (
+                <div className="space-y-4 text-sm text-white/90">
+                  <p className="font-medium">Dry run: generated prompts (no verification run).</p>
+                  <pre className="rounded-lg bg-white/5 p-4 whitespace-pre-wrap break-words text-xs overflow-x-auto">
+                    {typeof (data as unknown as { generated_instructions?: string }).generated_instructions === "string"
+                      ? (data as unknown as { generated_instructions: string }).generated_instructions?.slice(0, 3000) + "\n..."
+                      : ""}
+                  </pre>
+                </div>
+              ) : (
+                <div className="overflow-x-auto -mx-2">
+                  <table className="w-full text-sm text-left text-white">
+                    <thead>
+                      <tr className="border-b border-white/20">
+                        <th className="px-4 py-3 font-semibold text-white/90">Job Title</th>
+                        <th className="px-4 py-3 font-semibold text-white/90">Company</th>
+                        <th className="px-4 py-3 font-semibold text-white/90">Estimated Salary</th>
+                        <th className="px-4 py-3 font-semibold text-white/90">Call Back Score</th>
+                        <th className="px-4 py-3 font-semibold text-white/90">Application link</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {results.map((job, i) => (
+                        <tr key={i} className="border-b border-white/10 hover:bg-white/5">
+                          <td className="px-4 py-3 align-top font-medium">{job.job_title}</td>
+                          <td className="px-4 py-3 align-top"><span className="text-[#c4b5fd]">{job.company}</span></td>
+                          <td className="px-4 py-3 align-top">
+                            {job.salary && (job.salary.min != null || job.salary.max != null)
+                              ? (() => {
                                 const fmt = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: job.salary?.currency || "USD", maximumFractionDigits: 0 });
                                 const min = job.salary.min != null ? fmt(job.salary.min) : null;
                                 const max = job.salary.max != null ? fmt(job.salary.max) : null;
@@ -706,46 +715,46 @@ export default function Home() {
                                   </span>
                                 );
                               })()
-                            : <span className="text-white/40">—</span>}
-                        </td>
-                        <td className="px-4 py-3 align-top font-medium">{job.callback_likelihood_score}</td>
-                        <td className="px-4 py-3 align-top">
-                          {job.direct_apply_link && job.direct_apply_link.startsWith("http") && !job.direct_apply_link.includes("localhost") ? (
-                            <div className="flex flex-col gap-1">
-                              <a href={job.direct_apply_link} target="_blank" rel="noopener noreferrer" className="text-[#DF338C] hover:text-white font-medium">
-                                Apply →
-                              </a>
-                              {job.notes && job.notes.length > 0 && (
-                                <>
-                                  {/* Page type labels */}
-                                  {job.notes.filter(n => 
-                                    n.startsWith("📋") || n.startsWith("✅") || n.startsWith("🔍") || 
-                                    n.startsWith("🏢") || n.startsWith("📰") || n.startsWith("❓")
-                                  ).map((note, i) => (
-                                    <span key={`type-${i}`} className="inline-flex items-center gap-1 text-xs text-green-400/90 font-medium">{note}</span>
-                                  ))}
-                                  {/* Warning notes */}
-                                  {job.notes.filter(n => n.startsWith("⚠️")).map((note, i) => (
-                                    <span key={`warn-${i}`} className="text-yellow-400/80 text-xs">{note}</span>
-                                  ))}
-                                  {/* Info notes */}
-                                  {job.notes.filter(n => n.startsWith("ℹ️")).map((note, i) => (
-                                    <span key={`info-${i}`} className="text-blue-400/70 text-xs">{note}</span>
-                                  ))}
-                                </>
-                              )}
-                            </div>
-                          ) : (
-                            <span className="text-white/50">—</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+                              : <span className="text-white/40">—</span>}
+                          </td>
+                          <td className="px-4 py-3 align-top font-medium">{job.callback_likelihood_score}</td>
+                          <td className="px-4 py-3 align-top">
+                            {job.direct_apply_link && job.direct_apply_link.startsWith("http") && !job.direct_apply_link.includes("localhost") ? (
+                              <div className="flex flex-col gap-1">
+                                <a href={job.direct_apply_link} target="_blank" rel="noopener noreferrer" className="text-[#DF338C] hover:text-white font-medium">
+                                  Apply →
+                                </a>
+                                {job.notes && job.notes.length > 0 && (
+                                  <>
+                                    {/* Page type labels */}
+                                    {job.notes.filter(n =>
+                                      n.startsWith("📋") || n.startsWith("✅") || n.startsWith("🔍") ||
+                                      n.startsWith("🏢") || n.startsWith("📰") || n.startsWith("❓")
+                                    ).map((note, i) => (
+                                      <span key={`type-${i}`} className="inline-flex items-center gap-1 text-xs text-green-400/90 font-medium">{note}</span>
+                                    ))}
+                                    {/* Warning notes */}
+                                    {job.notes.filter(n => n.startsWith("⚠️")).map((note, i) => (
+                                      <span key={`warn-${i}`} className="text-yellow-400/80 text-xs">{note}</span>
+                                    ))}
+                                    {/* Info notes */}
+                                    {job.notes.filter(n => n.startsWith("ℹ️")).map((note, i) => (
+                                      <span key={`info-${i}`} className="text-blue-400/70 text-xs">{note}</span>
+                                    ))}
+                                  </>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-white/50">—</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           );
         })()}
       </div>

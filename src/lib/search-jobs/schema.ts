@@ -37,6 +37,7 @@ export const searchJobsInputSchema = z.object({
   posted_within_days: z.number().int().min(1).max(30).default(3),
   resume_text: z.string().trim().max(RESUME_TEXT_MAX_LENGTH).optional().default(""),
   dry_run: z.boolean().optional().default(false),
+  fast_mode: z.boolean().optional().default(false),
 });
 
 export type SearchJobsInput = z.infer<typeof searchJobsInputSchema>;

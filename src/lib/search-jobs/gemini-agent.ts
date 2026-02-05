@@ -129,10 +129,10 @@ export async function runGeminiSearchOnly(
   prompt: string
 ): Promise<{ outputText: string; urlContextMetadata?: unknown }> {
   const ai = new GoogleGenAI({ apiKey });
-  
+
   const MAX_RETRIES = 3;
   const INITIAL_DELAY_MS = 2000;
-  
+
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
       const response = await ai.models.generateContent({
@@ -148,32 +148,139 @@ export async function runGeminiSearchOnly(
         },
       });
       const text = (response as { text?: string }).text ?? "";
-      
+
       // Extract URL context metadata if available
       const urlContextMetadata = (response as { candidates?: Array<{ urlContextMetadata?: unknown }> })
         .candidates?.[0]?.urlContextMetadata;
-      
+
       if (urlContextMetadata) {
         console.log("[gemini] URL context used:", JSON.stringify(urlContextMetadata));
       }
-      
+
       return { outputText: text, urlContextMetadata };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      const isOverloaded = errorMessage.includes("503") || 
-                           errorMessage.includes("overloaded") || 
-                           errorMessage.includes("UNAVAILABLE");
-      
+      const isOverloaded = errorMessage.includes("503") ||
+        errorMessage.includes("overloaded") ||
+        errorMessage.includes("UNAVAILABLE");
+
       if (isOverloaded && attempt < MAX_RETRIES) {
         const delay = INITIAL_DELAY_MS * Math.pow(2, attempt); // 2s, 4s, 8s
         console.log(`[gemini] Model overloaded, retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})`);
         await sleep(delay);
         continue;
       }
-      
+
       throw err;
     }
   }
-  
+
   return { outputText: "" };
+}
+
+/**
+ * Fast Mode: AI-generated job suggestions without verification.
+ * Single API call, no Google Search, no URL Context, no function calling.
+ * Generates plausible job suggestions in ~3-5 seconds.
+ * Trade-off: URLs may be outdated/incorrect, salaries are estimates.
+ */
+export async function runGeminiFastMode(
+  apiKey: string,
+  searchCriteria: {
+    top_n: number;
+    industries: string[];
+    titles: string[];
+    zip_code?: string;
+    radius_miles?: number;
+    remote_only: boolean;
+    salary_min: number;
+    posted_within_days?: number;
+  }
+): Promise<{ outputText: string }> {
+  const ai = new GoogleGenAI({ apiKey });
+
+  const titlesStr = searchCriteria.titles.length > 0 ? searchCriteria.titles.join(", ") : "any relevant role";
+  const industriesStr = searchCriteria.industries.length > 0 ? searchCriteria.industries.join(", ") : "any industry";
+  const locationStr = searchCriteria.remote_only
+    ? "remote positions"
+    : searchCriteria.zip_code
+      ? `positions near ${searchCriteria.zip_code} (within ${searchCriteria.radius_miles || 25} miles)`
+      : "any location";
+  const salaryNote = searchCriteria.salary_min > 0
+    ? ` with estimated salary >= $${searchCriteria.salary_min.toLocaleString()}/year`
+    : "";
+
+  const prompt = `You are a job search assistant generating plausible job suggestions.
+
+SEARCH CRITERIA:
+- Number of jobs: ${searchCriteria.top_n}
+- Job titles: ${titlesStr}
+- Industries: ${industriesStr}
+- Location: ${locationStr}
+- Salary minimum: $${searchCriteria.salary_min.toLocaleString()}/year
+- Posted within: ${searchCriteria.posted_within_days || 30} days
+
+TASK:
+Generate ${searchCriteria.top_n} realistic job suggestions that match these criteria. Base your suggestions on:
+1. Common job boards (Greenhouse, Lever, Ashby, Workday, company career pages)
+2. Typical companies in the specified industries
+3. Realistic salary ranges for the roles
+4. Current hiring trends
+
+IMPORTANT:
+- Use realistic company names and typical ATS URLs (e.g., boards.greenhouse.io/company/jobs/123456)
+- URLs should follow common patterns but may not be real/active
+- Salaries should be realistic estimates (set is_estimated: true)
+- Include a callback_likelihood_score (0-100) based on:
+  * Smaller companies: higher scores (60-85)
+  * Larger tech companies: lower scores (30-50)
+  * Direct ATS platforms: +10 points
+  * Recently posted: +5-10 points
+
+OUTPUT FORMAT:
+Return ONLY a valid JSON array with ${searchCriteria.top_n} job objects. No markdown, no explanatory text.
+
+[
+  {
+    "job_title": "Senior Product Manager",
+    "company": "TechStartup Inc",
+    "direct_apply_link": "https://jobs.lever.co/techstartup/abc123def456",
+    "salary": { 
+      "min": 150000, 
+      "max": 180000, 
+      "currency": "USD", 
+      "period": "yearly", 
+      "is_estimated": true 
+    },
+    "location": "Remote",
+    "callback_likelihood_score": 75,
+    "score_rationale": ["Small company +15", "Direct ATS +10", "Recently posted +5"],
+    "notes": ["⚠️ Fast mode: unverified suggestion", "Position may not be active"]
+  }
+]
+
+CRITICAL RULES:
+- Return exactly ${searchCriteria.top_n} jobs
+- All URLs must be complete (start with https://)
+- Set is_estimated: true for all salaries
+- Include warning notes about unverified data
+- Sort by callback_likelihood_score (highest first)
+- JSON only, no other text`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      config: {
+        temperature: 0.7, // Higher creativity for suggestions
+        maxOutputTokens: 8192,
+      },
+    });
+
+    const text = (response as { text?: string }).text ?? "";
+    return { outputText: text };
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    throw new Error(`Fast mode generation failed: ${errorMessage}`);
+  }
 }
